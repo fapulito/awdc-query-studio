@@ -1,0 +1,30 @@
+// Error was fixed when env variable 'SKIP_INITIAL_PDF_INDEX = true' is added
+
+2025-11-01T06:14:21.687Z [error] ✓ Configuration validation successful
+2025-11-01 06:14:20 - root - INFO - Logging configured: environment=development, level=DEBUG
+2025-11-01 06:14:20 - api.index - INFO - Application configuration loaded
+2025-11-01 06:14:20 - modules.session_manager - INFO - SessionManager initialized with max_history=10, timeout=1800s
+Traceback (most recent call last):
+File "/var/task/vc__handler__python.py", line 38, in <module>
+__vc_spec.loader.exec_module(__vc_module)
+File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+File "/var/task/api/index.py", line 678, in <module>
+@app.before_first_request
+^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Flask' object has no attribute 'before_first_request'. Did you mean: '_got_first_request'?
+Python process exited with exit status: 1. The logs above can help with debugging the issue.
+✓ Configuration validation successful
+2025-11-01 06:14:21 - root - INFO - Logging configured: environment=development, level=DEBUG
+2025-11-01 06:14:21 - api.index - INFO - Application configuration loaded
+2025-11-01 06:14:21 - modules.session_manager - INFO - SessionManager initialized with max_history=10, timeout=1800s
+Traceback (most recent call last):
+File "/var/task/vc__handler__python.py", line 38, in <module>
+__vc_spec.loader.exec_module(__vc_module)
+File "<frozen importlib._bootstrap_external>", line 999, in exec_module
+File "<frozen importlib._bootstrap>", line 488, in _call_with_frames_removed
+File "/var/task/api/index.py", line 678, in <module>
+@app.before_first_request
+^^^^^^^^^^^^^^^^^^^^^^^^
+AttributeError: 'Flask' object has no attribute 'before_first_request'. Did you mean: '_got_first_request'?
+Python process exited with exit status: 1. The logs above can help with debugging the issue.

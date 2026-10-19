@@ -1,0 +1,492 @@
+Vercel Error
+
+2025-11-01T04:33:29.979Z [info] 2025-11-01 04:33:29 - api.index - INFO - Initializing LLM service
+2025-11-01T04:33:29.979Z [info] 2025-11-01 04:33:29 - modules.llm_service - INFO - LLM service configuration loaded: provider=gemini, model=gemini-2.0-flash
+2025-11-01T04:33:30.815Z [info] 2025-11-01 04:33:30 - modules.llm_service - INFO - LLMService initialized with Gemini model: gemini-2.0-flash
+2025-11-01T04:33:30.815Z [info] 2025-11-01 04:33:30 - modules.llm_service - INFO - LLMService initialized with model: gemini-2.0-flash
+2025-11-01T04:33:30.815Z [info] 2025-11-01 04:33:30 - modules.serverless_optimizer - INFO - Cold start optimization: __init__ completed in 835.94ms
+2025-11-01T04:33:30.815Z [info] 2025-11-01 04:33:30 - api.index - INFO - LLM service initialized
+2025-11-01T04:33:30.815Z [info] 2025-11-01 04:33:30 - api.index - INFO - Initializing PDF MCP Server
+2025-11-01T04:33:30.815Z [info] 2025-11-01 04:33:30 - modules.serverless_optimizer - DEBUG - Redirecting filesystem path from ./pdf_index.json to /tmp/pdf_index.json
+2025-11-01T04:33:30.815Z [info] 2025-11-01 04:33:30 - modules.pdf_mcp_server - INFO - PDF MCP Server initialized with library: pdfplumber
+2025-11-01T04:33:30.815Z [info] 2025-11-01 04:33:30 - modules.pdf_mcp_server - INFO - Storage path: ./pdfs
+2025-11-01T04:33:30.816Z [info] 2025-11-01 04:33:30 - modules.pdf_mcp_server - INFO - No existing index found, will create new index
+2025-11-01T04:33:30.816Z [info] 2025-11-01 04:33:30 - modules.pdf_mcp_server - INFO - Indexing PDF: oracle-apex-api-reference.pdf
+2025-11-01T04:33:30.816Z [info] 2025-11-01 04:33:30 - pdfminer.psparser - DEBUG - seek: 0
+2025-11-01T04:33:30.817Z [info] 2025-11-01 04:33:30 - pdfminer.pdfdocument - DEBUG - find_xref: b''
+2025-11-01T04:33:30.817Z [info] 2025-11-01 04:33:30 - pdfminer.pdfdocument - DEBUG - find_xref: b''
+2025-11-01T04:33:30.817Z [info] 2025-11-01 04:33:30 - pdfminer.pdfdocument - DEBUG - find_xref: b'%%EOF'
+2025-11-01T04:33:30.817Z [info] 2025-11-01 04:33:30 - pdfminer.pdfdocument - DEBUG - find_xref: b'4603973'
+2025-11-01T04:33:30.817Z [info] 2025-11-01 04:33:30 - pdfminer.pdfdocument - DEBUG - find_xref: b'startxref'
+2025-11-01T04:33:30.817Z [info] 2025-11-01 04:33:30 - pdfminer.pdfdocument - DEBUG - xref found: pos=b'4603973'
+2025-11-01T04:33:30.817Z [info] 2025-11-01 04:33:30 - pdfminer.psparser - DEBUG - seek: 4603973
+2025-11-01T04:33:30.818Z [error] --- Logging error ---
+2025-11-01T04:33:30.818Z [info] Traceback (most recent call last):
+2025-11-01T04:33:30.818Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.818Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.818Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.818Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+2025-11-01T04:33:30.818Z [info] TypeError: not all arguments converted during string formatting
+2025-11-01T04:33:30.818Z [error] Call stack:
+2025-11-01T04:33:30.821Z [info] File "/var/lang/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+2025-11-01T04:33:30.821Z [info] File "/var/lang/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+2025-11-01T04:33:30.821Z [info] File "/var/lang/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+2025-11-01T04:33:30.821Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+2025-11-01T04:33:30.821Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+2025-11-01T04:33:30.821Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 766, in __init__
+    self.handle()
+2025-11-01T04:33:30.821Z [info] File "/var/lang/lib/python3.12/http/server.py", line 436, in handle
+    self.handle_one_request()
+2025-11-01T04:33:30.821Z [info] File "/var/task/vc__handler__python.py", line 227, in handle_one_request
+    self.handle_request()
+2025-11-01T04:33:30.821Z [info] File "/var/task/vc__handler__python.py", line 315, in handle_request
+    response = app(env, start_response)
+2025-11-01T04:33:30.821Z [info] File "/var/task/_vendor/flask/app.py", line 1478, in __call__
+    return self.wsgi_app(environ, start_response)
+2025-11-01T04:33:30.821Z [info] File "/var/task/_vendor/flask/app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+2025-11-01T04:33:30.821Z [info] File "/var/task/_vendor/flask/app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+2025-11-01T04:33:30.821Z [info] File "/var/task/_vendor/flask/app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+2025-11-01T04:33:30.821Z [info] File "/var/task/api/index.py", line 231, in chat
+    initialize_services()
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/index.py", line 122, in initialize_services
+    pdf_server = PDFMCPServer()
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 61, in __init__
+    self._load_or_create_index()
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 113, in _load_or_create_index
+    self.refresh_index()
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/error_handler.py", line 231, in wrapper
+    return func(*args, **kwargs)
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 327, in refresh_index
+    doc_data = self._index_pdf(pdf_path)
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 203, in _index_pdf
+    pages_data = self._extract_text_from_pdf(pdf_path)
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 184, in _extract_text_from_pdf
+    return self._extract_text_pdfplumber(pdf_path)
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 128, in _extract_text_pdfplumber
+    with pdfplumber.open(pdf_path) as pdf:
+2025-11-01T04:33:30.822Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 94, in open
+    return cls(
+2025-11-01T04:33:30.822Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 44, in __init__
+    self.doc = PDFDocument(PDFParser(stream), password=password or "")
+2025-11-01T04:33:30.822Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 722, in __init__
+    self.read_xref_from(parser, pos, self.xrefs)
+2025-11-01T04:33:30.822Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 991, in read_xref_from
+    (pos, token) = parser.nexttoken()
+2025-11-01T04:33:30.822Z [info] File "/var/task/_vendor/pdfminer/psparser.py", line 529, in nexttoken
+    log.debug("nexttoken: %r", token)
+2025-11-01T04:33:30.822Z [error] Message: 'nexttoken: ***REDACTED***'
+Arguments: ([4603973, 26218],)
+2025-11-01T04:33:30.822Z [error] --- Logging error ---
+2025-11-01T04:33:30.822Z [info] Traceback (most recent call last):
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+2025-11-01T04:33:30.822Z [info] TypeError: not all arguments converted during string formatting
+2025-11-01T04:33:30.822Z [error] Call stack:
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 766, in __init__
+    self.handle()
+2025-11-01T04:33:30.822Z [info] File "/var/lang/lib/python3.12/http/server.py", line 436, in handle
+    self.handle_one_request()
+2025-11-01T04:33:30.822Z [info] File "/var/task/vc__handler__python.py", line 227, in handle_one_request
+    self.handle_request()
+2025-11-01T04:33:30.822Z [info] File "/var/task/vc__handler__python.py", line 315, in handle_request
+    response = app(env, start_response)
+2025-11-01T04:33:30.822Z [info] File "/var/task/_vendor/flask/app.py", line 1478, in __call__
+    return self.wsgi_app(environ, start_response)
+2025-11-01T04:33:30.822Z [info] File "/var/task/_vendor/flask/app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+2025-11-01T04:33:30.822Z [info] File "/var/task/_vendor/flask/app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+2025-11-01T04:33:30.822Z [info] File "/var/task/_vendor/flask/app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/index.py", line 231, in chat
+    initialize_services()
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/index.py", line 122, in initialize_services
+    pdf_server = PDFMCPServer()
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 61, in __init__
+    self._load_or_create_index()
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 113, in _load_or_create_index
+    self.refresh_index()
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/error_handler.py", line 231, in wrapper
+    return func(*args, **kwargs)
+2025-11-01T04:33:30.822Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 327, in refresh_index
+    doc_data = self._index_pdf(pdf_path)
+2025-11-01T04:33:30.823Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 203, in _index_pdf
+    pages_data = self._extract_text_from_pdf(pdf_path)
+2025-11-01T04:33:30.823Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 184, in _extract_text_from_pdf
+    return self._extract_text_pdfplumber(pdf_path)
+2025-11-01T04:33:30.823Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 128, in _extract_text_pdfplumber
+    with pdfplumber.open(pdf_path) as pdf:
+2025-11-01T04:33:30.823Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 94, in open
+    return cls(
+2025-11-01T04:33:30.823Z [info] 2025-11-01 04:33:30 - pdfminer.psparser - DEBUG - seek: 4603973
+2025-11-01T04:33:30.823Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 44, in __init__
+    self.doc = PDFDocument(PDFParser(stream), password=password or "")
+2025-11-01T04:33:30.823Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 722, in __init__
+    self.read_xref_from(parser, pos, self.xrefs)
+2025-11-01T04:33:30.823Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 994, in read_xref_from
+    log.debug("read_xref_from: start=%d, token=%r", start, token)
+2025-11-01T04:33:30.823Z [error] Message: 'read_xref_from: start=%d, token=***REDACTED***'
+Arguments: (4603973, 26218)
+2025-11-01T04:33:30.823Z [error] --- Logging error ---
+2025-11-01T04:33:30.823Z [info] Traceback (most recent call last):
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+2025-11-01T04:33:30.823Z [info] TypeError: not all arguments converted during string formatting
+2025-11-01T04:33:30.823Z [error] Call stack:
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 766, in __init__
+    self.handle()
+2025-11-01T04:33:30.823Z [info] File "/var/lang/lib/python3.12/http/server.py", line 436, in handle
+    self.handle_one_request()
+2025-11-01T04:33:30.823Z [info] File "/var/task/vc__handler__python.py", line 227, in handle_one_request
+    self.handle_request()
+2025-11-01T04:33:30.823Z [info] File "/var/task/vc__handler__python.py", line 315, in handle_request
+    response = app(env, start_response)
+2025-11-01T04:33:30.823Z [info] File "/var/task/_vendor/flask/app.py", line 1478, in __call__
+    return self.wsgi_app(environ, start_response)
+2025-11-01T04:33:30.823Z [info] File "/var/task/_vendor/flask/app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+2025-11-01T04:33:30.823Z [info] File "/var/task/_vendor/flask/app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+2025-11-01T04:33:30.823Z [info] File "/var/task/_vendor/flask/app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+2025-11-01T04:33:30.823Z [info] File "/var/task/api/index.py", line 231, in chat
+    initialize_services()
+2025-11-01T04:33:30.823Z [info] File "/var/task/api/index.py", line 122, in initialize_services
+    pdf_server = PDFMCPServer()
+2025-11-01T04:33:30.823Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 61, in __init__
+    self._load_or_create_index()
+2025-11-01T04:33:30.823Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 113, in _load_or_create_index
+    self.refresh_index()
+2025-11-01T04:33:30.823Z [info] File "/var/task/api/../modules/error_handler.py", line 231, in wrapper
+    return func(*args, **kwargs)
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 327, in refresh_index
+    doc_data = self._index_pdf(pdf_path)
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 203, in _index_pdf
+    pages_data = self._extract_text_from_pdf(pdf_path)
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 184, in _extract_text_from_pdf
+    return self._extract_text_pdfplumber(pdf_path)
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 128, in _extract_text_pdfplumber
+    with pdfplumber.open(pdf_path) as pdf:
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 94, in open
+    return cls(
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 44, in __init__
+    self.doc = PDFDocument(PDFParser(stream), password=password or "")
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 722, in __init__
+    self.read_xref_from(parser, pos, self.xrefs)
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 1000, in read_xref_from
+    xref.load(parser)
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 277, in load
+    (_, objid) = parser.nexttoken()  # ignored
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfminer/psparser.py", line 529, in nexttoken
+    log.debug("nexttoken: %r", token)
+2025-11-01T04:33:30.824Z [error] Message: 'nexttoken: ***REDACTED***'
+Arguments: ([4603973, 26218],)
+2025-11-01T04:33:30.824Z [error] --- Logging error ---
+2025-11-01T04:33:30.824Z [info] Traceback (most recent call last):
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+2025-11-01T04:33:30.824Z [info] TypeError: not all arguments converted during string formatting
+2025-11-01T04:33:30.824Z [error] Call stack:
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 766, in __init__
+    self.handle()
+2025-11-01T04:33:30.824Z [info] File "/var/lang/lib/python3.12/http/server.py", line 436, in handle
+    self.handle_one_request()
+2025-11-01T04:33:30.824Z [info] File "/var/task/vc__handler__python.py", line 227, in handle_one_request
+    self.handle_request()
+2025-11-01T04:33:30.824Z [info] File "/var/task/vc__handler__python.py", line 315, in handle_request
+    response = app(env, start_response)
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/flask/app.py", line 1478, in __call__
+    return self.wsgi_app(environ, start_response)
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/flask/app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/flask/app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/flask/app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/index.py", line 231, in chat
+    initialize_services()
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/index.py", line 122, in initialize_services
+    pdf_server = PDFMCPServer()
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 61, in __init__
+    self._load_or_create_index()
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 113, in _load_or_create_index
+    self.refresh_index()
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/error_handler.py", line 231, in wrapper
+    return func(*args, **kwargs)
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 327, in refresh_index
+    doc_data = self._index_pdf(pdf_path)
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 203, in _index_pdf
+    pages_data = self._extract_text_from_pdf(pdf_path)
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 184, in _extract_text_from_pdf
+    return self._extract_text_pdfplumber(pdf_path)
+2025-11-01T04:33:30.824Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 128, in _extract_text_pdfplumber
+    with pdfplumber.open(pdf_path) as pdf:
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 94, in open
+    return cls(
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 44, in __init__
+    self.doc = PDFDocument(PDFParser(stream), password=password or "")
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 722, in __init__
+    self.read_xref_from(parser, pos, self.xrefs)
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 1000, in read_xref_from
+    xref.load(parser)
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 278, in load
+    (_, genno) = parser.nexttoken()  # ignored
+2025-11-01T04:33:30.824Z [info] File "/var/task/_vendor/pdfminer/psparser.py", line 529, in nexttoken
+    log.debug("nexttoken: %r", token)
+2025-11-01T04:33:30.824Z [error] Message: 'nexttoken: ***REDACTED***'
+Arguments: ([4603979, 0],)
+2025-11-01T04:33:30.824Z [error] --- Logging error ---
+2025-11-01T04:33:30.825Z [info] Traceback (most recent call last):
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+2025-11-01T04:33:30.825Z [info] TypeError: not all arguments converted during string formatting
+2025-11-01T04:33:30.825Z [error] Call stack:
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 766, in __init__
+    self.handle()
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/http/server.py", line 436, in handle
+    self.handle_one_request()
+2025-11-01T04:33:30.825Z [info] File "/var/task/vc__handler__python.py", line 227, in handle_one_request
+    self.handle_request()
+2025-11-01T04:33:30.825Z [info] File "/var/task/vc__handler__python.py", line 315, in handle_request
+    response = app(env, start_response)
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/flask/app.py", line 1478, in __call__
+    return self.wsgi_app(environ, start_response)
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/flask/app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/flask/app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/flask/app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+2025-11-01T04:33:30.825Z [info] File "/var/task/api/index.py", line 231, in chat
+    initialize_services()
+2025-11-01T04:33:30.825Z [info] File "/var/task/api/index.py", line 122, in initialize_services
+    pdf_server = PDFMCPServer()
+2025-11-01T04:33:30.825Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 61, in __init__
+    self._load_or_create_index()
+2025-11-01T04:33:30.825Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 113, in _load_or_create_index
+    self.refresh_index()
+2025-11-01T04:33:30.825Z [info] File "/var/task/api/../modules/error_handler.py", line 231, in wrapper
+    return func(*args, **kwargs)
+2025-11-01T04:33:30.825Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 327, in refresh_index
+    doc_data = self._index_pdf(pdf_path)
+2025-11-01T04:33:30.825Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 203, in _index_pdf
+    pages_data = self._extract_text_from_pdf(pdf_path)
+2025-11-01T04:33:30.825Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 184, in _extract_text_from_pdf
+    return self._extract_text_pdfplumber(pdf_path)
+2025-11-01T04:33:30.825Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 128, in _extract_text_pdfplumber
+    with pdfplumber.open(pdf_path) as pdf:
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 94, in open
+    return cls(
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 44, in __init__
+    self.doc = PDFDocument(PDFParser(stream), password=password or "")
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 722, in __init__
+    self.read_xref_from(parser, pos, self.xrefs)
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 1000, in read_xref_from
+    xref.load(parser)
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 279, in load
+    (_, kwd) = parser.nexttoken()
+2025-11-01T04:33:30.825Z [info] File "/var/task/_vendor/pdfminer/psparser.py", line 529, in nexttoken
+    log.debug("nexttoken: %r", token)
+2025-11-01T04:33:30.825Z [error] Message: 'nexttoken: ***REDACTED***'
+Arguments: ([4603981, /b'obj'],)
+2025-11-01T04:33:30.825Z [error] --- Logging error ---
+2025-11-01T04:33:30.825Z [info] Traceback (most recent call last):
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+2025-11-01T04:33:30.825Z [info] TypeError: not all arguments converted during string formatting
+2025-11-01T04:33:30.825Z [error] Call stack:
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+2025-11-01T04:33:30.825Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 766, in __init__
+    self.handle()
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/http/server.py", line 436, in handle
+    self.handle_one_request()
+2025-11-01T04:33:30.826Z [info] File "/var/task/vc__handler__python.py", line 227, in handle_one_request
+    self.handle_request()
+2025-11-01T04:33:30.826Z [info] File "/var/task/vc__handler__python.py", line 315, in handle_request
+    response = app(env, start_response)
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/flask/app.py", line 1478, in __call__
+    return self.wsgi_app(environ, start_response)
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/flask/app.py", line 1455, in wsgi_app
+    response = self.full_dispatch_request()
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/flask/app.py", line 867, in full_dispatch_request
+    rv = self.dispatch_request()
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/flask/app.py", line 852, in dispatch_request
+    return self.ensure_sync(self.view_functions[rule.endpoint])(**view_args)
+2025-11-01T04:33:30.826Z [info] File "/var/task/api/index.py", line 231, in chat
+    initialize_services()
+2025-11-01T04:33:30.826Z [info] File "/var/task/api/index.py", line 122, in initialize_services
+    pdf_server = PDFMCPServer()
+2025-11-01T04:33:30.826Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 61, in __init__
+    self._load_or_create_index()
+2025-11-01T04:33:30.826Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 113, in _load_or_create_index
+    self.refresh_index()
+2025-11-01T04:33:30.826Z [info] File "/var/task/api/../modules/error_handler.py", line 231, in wrapper
+    return func(*args, **kwargs)
+2025-11-01T04:33:30.826Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 327, in refresh_index
+    doc_data = self._index_pdf(pdf_path)
+2025-11-01T04:33:30.826Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 203, in _index_pdf
+    pages_data = self._extract_text_from_pdf(pdf_path)
+2025-11-01T04:33:30.826Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 184, in _extract_text_from_pdf
+    return self._extract_text_pdfplumber(pdf_path)
+2025-11-01T04:33:30.826Z [info] File "/var/task/api/../modules/pdf_mcp_server.py", line 128, in _extract_text_pdfplumber
+    with pdfplumber.open(pdf_path) as pdf:
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 94, in open
+    return cls(
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/pdfplumber/pdf.py", line 44, in __init__
+    self.doc = PDFDocument(PDFParser(stream), password=password or "")
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 722, in __init__
+    self.read_xref_from(parser, pos, self.xrefs)
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 1000, in read_xref_from
+    xref.load(parser)
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/pdfminer/pdfdocument.py", line 280, in load
+    (_, stream) = parser.nextobject()
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/pdfminer/psparser.py", line 609, in nextobject
+    (pos, token) = self.nexttoken()
+2025-11-01T04:33:30.826Z [info] File "/var/task/_vendor/pdfminer/psparser.py", line 529, in nexttoken
+    log.debug("nexttoken: %r", token)
+2025-11-01T04:33:30.826Z [error] Message: 'nexttoken: ***REDACTED***'
+Arguments: ([4603985, /b'<<'],)
+2025-11-01T04:33:30.826Z [error] --- Logging error ---
+2025-11-01T04:33:30.826Z [info] 2025-11-01 04:33:30 - pdfminer.psparser - DEBUG - start_type: pos=4603985, type='d'
+2025-11-01T04:33:30.826Z [info] Traceback (most recent call last):
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 1160, in emit
+    msg = self.format(record)
+          ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 999, in format
+    return fmt.format(record)
+           ^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 703, in format
+    record.message = record.getMessage()
+                     ^^^^^^^^^^^^^^^^^^^
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/logging/__init__.py", line 392, in getMessage
+    msg = msg % self.args
+          ~~~~^~~~~~~~~~~
+2025-11-01T04:33:30.826Z [info] TypeError: not all arguments converted during string formatting
+2025-11-01T04:33:30.826Z [error] Call stack:
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/threading.py", line 1032, in _bootstrap
+    self._bootstrap_inner()
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/threading.py", line 1075, in _bootstrap_inner
+    self.run()
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/threading.py", line 1012, in run
+    self._target(*self._args, **self._kwargs)
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 697, in process_request_thread
+    self.finish_request(request, client_address)
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 362, in finish_request
+    self.RequestHandlerClass(request, client_address, self)
+2025-11-01T04:33:30.826Z [info] File "/var/lang/lib/python3.12/socketserver.py", line 766, in __init__
+    self.handle()
