@@ -199,6 +199,13 @@ def initialize_services():
         except Exception as e:
             logger.error(f"Failed to initialize MCP client: {str(e)}")
             # Continue without MCP client - will work in degraded mode
+
+    # Register in-process servers so their tools are offered to the LLM
+    # without requiring an HTTP sidecar process.
+    if mcp_client is not None and yugabyte_server is not None:
+        if not any(t.startswith('yb_') for t in mcp_client.available_tools):
+            mcp_client.register_in_process_server('yugabyte', yugabyte_server)
+            logger.info("YugabyteDB in-process server registered with MCP client")
     
     # Initialize APEX REST handler
     if apex_handler is None and llm_service is not None:

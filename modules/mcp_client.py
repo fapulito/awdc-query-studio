@@ -90,9 +90,39 @@ class MCPClient:
         self.server_status: Dict[str, ServerStatus] = {}
         self.available_tools: Dict[str, Tool] = {}
         self.sessions: Dict[str, requests.Session] = {}
+        # Maps tool_name -> in-process server object for tools registered via
+        # register_in_process_server().  These bypass HTTP entirely.
+        self._in_process_servers: Dict[str, Any] = {}
         
         logger.info(f"MCPClient initialized with {len(self.server_configs)} server(s)")
     
+    def register_in_process_server(self, server_name: str, server: Any) -> None:
+        """
+        Register an in-process MCP server so its tools are available without
+        an HTTP connection.  The server must implement:
+            get_available_tools() -> List[Dict[str, Any]]
+            execute_tool(tool_name: str, parameters: Dict[str, Any]) -> Dict
+
+        Args:
+            server_name: Logical name used in status reporting
+            server:      In-process server instance
+        """
+        tools = server.get_available_tools()
+        for tool_data in tools:
+            tool = Tool(
+                name=tool_data['name'],
+                description=tool_data.get('description', ''),
+                parameters=tool_data.get('parameters', {}),
+                server_name=server_name,
+            )
+            self.available_tools[tool.name] = tool
+            self._in_process_servers[tool.name] = server
+        self.server_status[server_name] = ServerStatus.CONNECTED
+        logger.info(
+            f"Registered in-process server '{server_name}' with "
+            f"{len(tools)} tool(s): {[t['name'] for t in tools]}"
+        )
+
     def connect_servers(self) -> Dict[str, bool]:
         """
         Connect to all configured MCP servers
@@ -377,8 +407,17 @@ class MCPClient:
             
             tool = self.available_tools[tool_name]
             server_name = tool.server_name
+
+            # --- In-process fast path: bypass HTTP for locally registered servers ---
+            if tool_name in self._in_process_servers:
+                in_proc_server = self._in_process_servers[tool_name]
+                result = in_proc_server.execute_tool(tool_name, parameters)
+                tool_call.result = result
+                logger.info(f"Executed in-process tool '{tool_name}' on '{server_name}'")
+                return tool_call
+            # --- End in-process fast path ---
             
-            # Check if server is connected
+            # Check if server is connected (HTTP servers only)
             if server_name not in self.sessions:
                 logger.warning(f"Server '{server_name}' not connected, attempting reconnection")
                 
