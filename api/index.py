@@ -684,7 +684,7 @@ def chat():
                 available_tools=available_tools,
                 tool_executor=mcp_client.execute_tool if mcp_client else lambda **kwargs: None,
                 system_prompt=system_prompt,
-                max_iterations=5
+                max_iterations=10
             )
             
             logger.info(

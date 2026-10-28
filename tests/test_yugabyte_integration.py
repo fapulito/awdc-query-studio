@@ -388,6 +388,100 @@ class TestQueryTableDateRelative:
 
 
 # ---------------------------------------------------------------------------
+# query_table — date_relative with max_date anchor
+# ---------------------------------------------------------------------------
+
+class TestQueryTableDateRelativeMaxDate:
+    """
+    Verify the max_date anchor resolves to a server-side MAX() subquery and
+    that negative offsets apply correctly — no user string ever appears in SQL.
+    """
+
+    def _setup(self, server):
+        """Wire a two-cursor connection (schema + data) and return the connection mock."""
+        schema_cursor = _make_cursor(
+            LAAS_COLUMNS, ["column_name", "data_type", "is_nullable", "ordinal_position"]
+        )
+        data_cursor = _make_cursor([], ["intake_date_month", "count"])
+        data_cursor.fetchall.return_value = []
+        conn = MagicMock()
+        conn.cursor.side_effect = [schema_cursor, data_cursor]
+        server.pool.getconn.return_value = conn
+        return conn
+
+    def test_max_date_offset_zero_succeeds(self, server):
+        """offset_years=0 with max_date anchor must succeed and produce a result dict."""
+        conn = self._setup(server)
+        result = server.query_table(
+            ALLOWED_TABLE,
+            filters=[
+                {"column": "intake_date", "operator": "date_relative",
+                 "value": {"anchor": "max_date", "offset_years": 0}},
+            ],
+            aggregates=[{"function": "COUNT", "column": "*", "alias": "count"}],
+            group_by=[{"column": "intake_date", "date_trunc": "month"}],
+        )
+        assert result["success"] is True
+
+    def test_max_date_sql_contains_subquery(self, server):
+        """
+        The generated SQL must contain a MAX() subquery referencing the column —
+        the anchor string 'max_date' must NOT appear in the SQL text.
+        Verifies via _resolve_date_relative directly (no DB round-trip needed).
+        """
+        expr = server._resolve_date_relative(
+            {"anchor": "max_date", "offset_years": 0},
+            table_name=ALLOWED_TABLE,
+            column="intake_date",
+        )
+        assert "max_date" not in expr, "anchor name must not appear in SQL expression"
+        assert "MAX" in expr, "MAX subquery must appear in SQL expression"
+        assert "SELECT MAX" in expr
+        assert ALLOWED_TABLE in expr
+
+    def test_max_date_negative_offset_succeeds(self, server):
+        """offset_years=-1 resolves to one year before max_date; no SQL injection."""
+        conn = self._setup(server)
+        result = server.query_table(
+            ALLOWED_TABLE,
+            filters=[
+                {"column": "intake_date", "operator": "date_relative",
+                 "value": {"anchor": "max_date", "offset_years": -1}},
+                {"column": "intake_date", "operator": "date_relative",
+                 "value": {"anchor": "max_date", "offset_years": 0}},
+            ],
+            aggregates=[{"function": "COUNT", "column": "*", "alias": "count"}],
+            group_by=[{"column": "intake_date", "date_trunc": "month"}],
+        )
+        assert result["success"] is True
+
+    def test_resolve_date_relative_max_date_expression_zero_offset(self, server):
+        """Unit-test _resolve_date_relative directly for exact SQL rendering."""
+        expr = server._resolve_date_relative(
+            {"anchor": "max_date", "offset_years": 0},
+            table_name=ALLOWED_TABLE,
+            column="intake_date",
+        )
+        assert "DATE_TRUNC('year'" in expr
+        assert "SELECT MAX" in expr
+        assert '"intake_date"' in expr
+        assert ALLOWED_TABLE in expr
+        # No offset interval when offset_years=0
+        assert "INTERVAL" not in expr
+
+    def test_resolve_date_relative_max_date_expression_negative_offset(self, server):
+        """_resolve_date_relative with offset_years=-2 must append a subtraction interval."""
+        expr = server._resolve_date_relative(
+            {"anchor": "max_date", "offset_years": -2},
+            table_name=ALLOWED_TABLE,
+            column="intake_date",
+        )
+        assert "DATE_TRUNC('year'" in expr
+        assert "SELECT MAX" in expr
+        assert "- INTERVAL '2 years'" in expr
+
+
+# ---------------------------------------------------------------------------
 # execute_tool dispatch
 # ---------------------------------------------------------------------------
 

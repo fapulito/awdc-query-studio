@@ -322,7 +322,7 @@ class TestChatRouteYbTools:
         """
         # Make process_conversation actually call the tool_executor once
         def fake_process(conversation_history, available_tools, tool_executor,
-                         system_prompt=None, max_iterations=5):
+                         system_prompt=None, max_iterations=10):
             tool_result = tool_executor(tool_name="yb_list_tables", parameters={})
             return "Tables fetched.", [{"tool_name": "yb_list_tables", "result": tool_result}]
 
@@ -352,7 +352,7 @@ class TestChatRouteYbTools:
         }
 
         def fake_process(conversation_history, available_tools, tool_executor,
-                         system_prompt=None, max_iterations=5):
+                         system_prompt=None, max_iterations=10):
             tool_executor(
                 tool_name="yb_describe_table",
                 parameters={"table_name": ALLOWED_TABLE},
@@ -384,7 +384,7 @@ class TestChatRouteYbTools:
         }
 
         def fake_process(conversation_history, available_tools, tool_executor,
-                         system_prompt=None, max_iterations=5):
+                         system_prompt=None, max_iterations=10):
             tool_executor(
                 tool_name="yb_query_table",
                 parameters={"table_name": ALLOWED_TABLE, "limit": 10},

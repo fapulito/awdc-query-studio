@@ -34,7 +34,7 @@ _VALID_FILTER_OPERATORS: Set[str] = {"=", "<", ">", "<=", ">=", "BETWEEN", "IN",
 _VALID_AGG_FUNCTIONS: Set[str] = {"COUNT", "AVG", "SUM", "MIN", "MAX"}
 _VALID_DATE_TRUNC_UNITS: Set[str] = {"month", "year", "day"}
 _VALID_EXTRACT_UNITS: Set[str] = {"month", "year", "day"}
-_VALID_DATE_ANCHORS: Set[str] = {"current_year_start"}
+_VALID_DATE_ANCHORS: Set[str] = {"current_year_start", "max_date"}
 _VALID_ORDER_DIRECTIONS: Set[str] = {"ASC", "DESC"}
 
 
@@ -333,11 +333,16 @@ class YugabyteMCPServer:
     # user-supplied string into SQL.
     # ------------------------------------------------------------------
 
-    def _resolve_date_relative(self, value: Dict[str, Any]) -> str:
+    def _resolve_date_relative(self, value: Dict[str, Any], table_name: Optional[str] = None, column: Optional[str] = None) -> str:
         """
         Resolve a date_relative value object to a safe SQL expression.
 
-        Recognized anchors: "current_year_start"
+        Recognized anchors:
+          "current_year_start" — DATE_TRUNC('year', CURRENT_DATE)
+          "max_date"           — DATE_TRUNC('year', MAX(<column>) subquery against
+                                 the target table); resolves to the start of the
+                                 calendar year containing the latest row in the data.
+
         offset_years: integer offset (0 = no offset, -1 = minus 1 year, etc.)
 
         Returns a SQL expression string (safe — rendered from fixed templates).
@@ -350,7 +355,23 @@ class YugabyteMCPServer:
                 f"Unknown anchor '{anchor}'. Valid anchors: {sorted(_VALID_DATE_ANCHORS)}",
             )
         offset_years = int(value.get("offset_years", 0))  # cast to int — never a string
-        base_expr = "DATE_TRUNC('year', CURRENT_DATE)"
+
+        if anchor == "max_date":
+            if not table_name or not column:
+                raise ValidationError(
+                    "date_relative.anchor",
+                    "anchor 'max_date' requires table_name and column context",
+                )
+            # Both table_name and column have already been validated (allow-list +
+            # identifier regex) by the time _resolve_date_relative is called from
+            # _build_filter_sql.  We use the pre-validated quoted_col from the
+            # caller but re-quote here from the raw (lowercased) column value.
+            # table_name is validated by _sanitize_table_name.
+            quoted_col = f'"{column}"'
+            base_expr = f"DATE_TRUNC('year', (SELECT MAX({quoted_col}) FROM {table_name}))"
+        else:
+            base_expr = "DATE_TRUNC('year', CURRENT_DATE)"
+
         if offset_years == 0:
             return base_expr
         # offset_years is an integer computed here on the server; it never came from a
@@ -364,6 +385,7 @@ class YugabyteMCPServer:
         filter_obj: Dict[str, Any],
         params: List[Any],
         valid_columns: Set[str],
+        table_name: Optional[str] = None,
     ) -> str:
         """
         Build a single WHERE predicate fragment from a structured filter object.
@@ -374,6 +396,8 @@ class YugabyteMCPServer:
             value    — scalar | list (for IN) | {anchor, offset_years} (for date_relative)
 
         All non-date_relative values are appended to params as bound parameters.
+
+        table_name is required when operator is "date_relative" with anchor "max_date".
 
         Returns a SQL fragment string (no user strings embedded).
         Raises ValidationError on invalid column or operator.
@@ -394,9 +418,9 @@ class YugabyteMCPServer:
         quoted_col = f'"{col}"'
 
         if operator == "date_relative":
-            sql_expr = self._resolve_date_relative(value)
+            sql_expr = self._resolve_date_relative(value, table_name=table_name, column=col)
             # The resolved expression is a server-side constant; no user string embedded
-            return f"{quoted_col} = {sql_expr}"
+            return f"{quoted_col} >= {sql_expr}"
 
         if operator == "BETWEEN":
             if not (isinstance(value, (list, tuple)) and len(value) == 2):
@@ -621,7 +645,7 @@ class YugabyteMCPServer:
         where_parts: List[str] = []
         if filters:
             for f in filters:
-                where_parts.append(self._build_filter_sql(f, params, valid_columns))
+                where_parts.append(self._build_filter_sql(f, params, valid_columns, table_name=table_name))
         where_clause = " AND ".join(where_parts)
 
         # ----------------------------------------------------------
@@ -772,17 +796,23 @@ class YugabyteMCPServer:
                                 "type": "object",
                                 "properties": {
                                     "column": {"type": "string"},
-                                    "operator": {
-                                        "type": "string",
-                                        "enum": ["=", "<", ">", "<=", ">=", "BETWEEN", "IN", "date_relative"],
-                                    },
-                                    "value": {
-                                        "description": (
-                                            "Scalar, list (for IN/BETWEEN), or "
-                                            "{anchor, offset_years} for date_relative. "
-                                            "anchor must be 'current_year_start'."
-                                        )
-                                    },
+                                   "operator": {
+                                       "type": "string",
+                                       "enum": ["=", "<", ">", "<=", ">=", "BETWEEN", "IN", "date_relative"],
+                                   },
+                                   "value": {
+                                       "description": (
+                                           "Scalar, list (for IN/BETWEEN), or "
+                                           "{anchor, offset_years} for date_relative. "
+                                           "anchor must be 'current_year_start' (start of "
+                                           "current calendar year) or 'max_date' (start of "
+                                           "the calendar year containing the latest date in "
+                                           "the column — use this for 'last full year of data' "
+                                           "or 'most recent year in the data' questions). "
+                                           "offset_years=0 means the anchor year itself; "
+                                           "offset_years=-1 means one year earlier."
+                                       )
+                                   },
                                 },
                                 "required": ["column", "operator", "value"],
                             },

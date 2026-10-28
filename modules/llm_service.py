@@ -399,7 +399,7 @@ class LLMService:
         available_tools: List[Dict[str, Any]],
         tool_executor: Any,
         system_prompt: Optional[str] = None,
-        max_iterations: int = 5
+        max_iterations: int = 10
     ) -> Tuple[str, List[Dict[str, Any]]]:
         """
         Process a conversation with tool execution loop and comprehensive error handling
@@ -582,6 +582,10 @@ YugabyteDB shelter database (tools: yb_query_table, yb_list_tables, yb_describe_
   Use the aggregates and group_by parameters of yb_query_table for COUNT,
   AVG, SUM, date-grouped trends, and filtered aggregates; do not fetch raw
   rows and aggregate in your response.
+  For month-by-month trend questions, prefer a single yb_query_table call
+  using a date_trunc month group_by together with date_relative filters
+  using the max_date anchor (anchor="max_date") rather than querying
+  multiple tables or years separately.
 
 PDF documents (tools: search_pdfs, get_document, list_documents)
   Use for searching uploaded reference documents."""
