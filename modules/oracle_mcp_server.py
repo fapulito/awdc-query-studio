@@ -4,11 +4,17 @@ Oracle APEX MCP Server Module
 This module provides MCP server functionality for Oracle database access.
 It implements connection pooling, secure credential management, and exposes
 database views as MCP tools.
+
+Security model: all user-supplied values are bound parameters; all
+column/view identifiers are validated against a fixed allow-list and the
+live Oracle data dictionary before use.  No free-form SQL is ever accepted
+from the LLM.
 """
 
 import os
 import logging
-from typing import Dict, List, Optional, Any
+import re
+from typing import Dict, List, Optional, Any, Set
 from contextlib import contextmanager
 import oracledb
 from modules.error_handler import (
@@ -16,6 +22,15 @@ from modules.error_handler import (
     handle_database_errors, log_error_with_context
 )
 from modules.serverless_optimizer import get_connection_cache, optimize_cold_start
+
+# ---------------------------------------------------------------------------
+# Allowed filter operators — fixed set, never extended from user input
+# ---------------------------------------------------------------------------
+_VALID_FILTER_OPERATORS: Set[str] = {"=", "<", ">", "<=", ">=", "BETWEEN", "IN"}
+
+# Oracle column name: letters, digits, underscore, hash, dollar — no spaces,
+# no SQL meta-characters.  Same conservative pattern as the Yugabyte server.
+_IDENTIFIER_RE = re.compile(r'^[A-Za-z_][A-Za-z0-9_#$]*$')
 
 logger = logging.getLogger(__name__)
 
@@ -354,207 +369,316 @@ class OracleMCPServer:
                 "error": f"Failed to describe view: {str(e)}"
             }
     
-    @handle_database_errors
-    def query_view(self, view_name: str, where_clause: Optional[str] = None, 
-                   limit: Optional[int] = None) -> Dict[str, Any]:
+    # ------------------------------------------------------------------
+    # Query-builder helpers
+    # ------------------------------------------------------------------
+
+    def _get_valid_columns(self, view_name: str) -> Set[str]:
         """
-        Execute a SELECT query on a whitelisted view with comprehensive error handling.
-        
+        Return the set of lowercased column names that exist in *view_name*.
+
+        Queries user_tab_columns with a bind parameter — the view name has
+        already been sanitised and allow-listed before this is called.
+        """
+        with self._get_connection() as conn:
+            cursor = conn.cursor()
+            try:
+                cursor.execute(
+                    "SELECT column_name FROM user_tab_columns WHERE table_name = :vn",
+                    {"vn": view_name},
+                )
+                return {row[0].lower() for row in cursor.fetchall()}
+            finally:
+                cursor.close()
+
+    def _build_filter_sql(
+        self,
+        filter_obj: Dict[str, Any],
+        bind_params: Dict[str, Any],
+        valid_columns: Set[str],
+    ) -> str:
+        """
+        Build a single WHERE predicate from a structured filter object.
+
+        filter_obj keys:
+            column   — column name (validated against valid_columns)
+            operator — one of _VALID_FILTER_OPERATORS
+            value    — scalar | list of 2 (BETWEEN) | list (IN)
+
+        Values are placed in bind_params as named Oracle bind parameters
+        (:param_N).  The returned string contains only :param_N placeholders
+        and quoted identifiers — no user strings are ever interpolated.
+
+        Raises ValidationError on invalid column or operator.
+        """
+        col = filter_obj.get("column", "").upper()
+        operator = filter_obj.get("operator", "")
+        value = filter_obj.get("value")
+
+        if col.lower() not in valid_columns:
+            raise ValidationError("filter.column", f"Unknown column '{col}'")
+        if operator not in _VALID_FILTER_OPERATORS:
+            raise ValidationError(
+                "filter.operator",
+                f"Invalid operator '{operator}'. Valid: {sorted(_VALID_FILTER_OPERATORS)}",
+            )
+
+        # Oracle allows double-quoted identifiers; col is uppercased from the
+        # data dictionary so quoting is safe.
+        quoted_col = f'"{col}"'
+        param_base = f"param_{len(bind_params)}"
+
+        if operator == "BETWEEN":
+            if not (isinstance(value, (list, tuple)) and len(value) == 2):
+                raise ValidationError("filter.value", "BETWEEN requires a list of exactly 2 values")
+            k_lo = f"{param_base}_lo"
+            k_hi = f"{param_base}_hi"
+            bind_params[k_lo] = value[0]
+            bind_params[k_hi] = value[1]
+            return f"{quoted_col} BETWEEN :{k_lo} AND :{k_hi}"
+
+        if operator == "IN":
+            if not isinstance(value, (list, tuple)) or len(value) == 0:
+                raise ValidationError("filter.value", "IN requires a non-empty list")
+            placeholders = []
+            for i, v in enumerate(value):
+                k = f"{param_base}_in{i}"
+                bind_params[k] = v
+                placeholders.append(f":{k}")
+            return f"{quoted_col} IN ({', '.join(placeholders)})"
+
+        # Simple comparison: =, <, >, <=, >=
+        bind_params[param_base] = value
+        return f"{quoted_col} {operator} :{param_base}"
+
+    @handle_database_errors
+    def query_view(
+        self,
+        view_name: str,
+        filters: Optional[List[Dict[str, Any]]] = None,
+        limit: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """
+        Execute a safe SELECT query on a whitelisted Oracle view.
+
+        All user-supplied values are bound parameters; all identifiers are
+        validated against the allow-list and the live Oracle data dictionary.
+        Free-form SQL is never accepted.
+
         Args:
-            view_name: Name of the view to query
-            where_clause: Optional WHERE clause (without the WHERE keyword)
-            limit: Optional limit on number of rows returned
-            
+            view_name: Name of the view to query (must be on the allow-list).
+            filters:   Optional list of structured filter objects, each with
+                       {column, operator, value}.  Supported operators:
+                       =, <, >, <=, >=, BETWEEN, IN.
+            limit:     Maximum number of rows to return.
+
         Returns:
-            Dictionary containing query results and metadata
-            
+            {success, view_name, columns, rows, row_count, limited,
+             executed_sql, parameters}
+
         Raises:
-            DatabaseError: On query execution failure
-            ValidationError: On invalid input
+            DatabaseError:  On query execution failure.
+            ValidationError: On invalid input.
         """
         try:
-            # Sanitize and validate view name
             try:
                 view_name = self._sanitize_view_name(view_name)
             except ValueError as e:
                 raise ValidationError("view_name", str(e))
-            
+
             if not self._is_view_allowed(view_name):
                 raise ValidationError(
                     "view_name",
                     f"View '{view_name}' is not in the allowed list",
-                    {"allowed_views": self.allowed_views}
+                    {"allowed_views": self.allowed_views},
                 )
-            
-            # Apply result size limit
-            if limit is None:
-                limit = self.max_result_size
-            else:
-                limit = min(limit, self.max_result_size)
-            
+
+            effective_limit = min(limit or self.max_result_size, self.max_result_size)
+
+            # One schema round-trip to get the live column set
+            valid_columns = self._get_valid_columns(view_name)
+
+            # Build WHERE clause — all values go into bind_params
+            bind_params: Dict[str, Any] = {}
+            where_parts: List[str] = []
+            if filters:
+                for f in filters:
+                    where_parts.append(
+                        self._build_filter_sql(f, bind_params, valid_columns)
+                    )
+
+            # Oracle double-quotes the view name; _sanitize_view_name ensures
+            # it contains only [A-Za-z0-9_], so quoting is safe.
+            sql = f'SELECT * FROM "{view_name}"'
+            if where_parts:
+                sql += " WHERE " + " AND ".join(where_parts)
+
+            # Row-limit via subquery + ROWNUM (standard Oracle pattern)
+            bind_params["_limit"] = effective_limit
+            sql = f"SELECT * FROM ({sql}) WHERE ROWNUM <= :_limit"
+
             with self._get_connection() as conn:
                 cursor = conn.cursor()
-                
                 try:
-                    # Build query with parameterization
-                    query = f"SELECT * FROM {view_name}"
-                    
-                    if where_clause:
-                        # Basic validation of WHERE clause
-                        dangerous_keywords = ['DROP', 'DELETE', 'INSERT', 'UPDATE', 'TRUNCATE', 
-                                             'ALTER', 'CREATE', 'GRANT', 'REVOKE']
-                        where_upper = where_clause.upper()
-                        if any(keyword in where_upper for keyword in dangerous_keywords):
-                            raise ValidationError(
-                                "where_clause",
-                                "WHERE clause contains forbidden SQL keywords",
-                                {"forbidden_keywords": dangerous_keywords}
-                            )
-                        query += f" WHERE {where_clause}"
-                    
-                    # Add row limit
-                    query = f"SELECT * FROM ({query}) WHERE ROWNUM <= :limit"
-                    
-                    # Execute query with timeout
                     try:
-                        cursor.execute(query, {"limit": limit})
+                        cursor.execute(sql, bind_params)
                     except oracledb.DatabaseError as e:
                         error_obj, = e.args
-                        if error_obj.code == 1013:  # ORA-01013: user requested cancel of current operation
+                        if error_obj.code == 1013:
                             raise TimeoutError("database_query", self.query_timeout, {
                                 "view_name": view_name,
-                                "query": query
+                                "query": sql,
                             })
-                        else:
-                            raise DatabaseError(
-                                f"Query execution failed: {error_obj.message}",
-                                query=query,
-                                details={"error_code": error_obj.code}
-                            )
-                    
-                    # Fetch results
+                        raise DatabaseError(
+                            f"Query execution failed: {error_obj.message}",
+                            query=sql,
+                            details={"error_code": error_obj.code},
+                        )
+
                     columns = [desc[0] for desc in cursor.description]
-                    rows = cursor.fetchall()
-                    
-                    # Format results
-                    results = []
-                    for row in rows:
-                        row_dict = {}
-                        for i, col_name in enumerate(columns):
-                            value = row[i]
-                            # Convert Oracle-specific types to JSON-serializable types
-                            if hasattr(value, 'isoformat'):  # datetime objects
-                                value = value.isoformat()
-                            elif isinstance(value, (bytes, bytearray)):  # binary data
-                                value = value.hex()
-                            row_dict[col_name] = value
-                        results.append(row_dict)
-                    
-                    logger.info(f"Successfully queried view {view_name}: {len(results)} rows returned")
-                    
-                    return {
-                        "success": True,
-                        "view_name": view_name,
-                        "columns": columns,
-                        "rows": results,
-                        "row_count": len(results),
-                        "limited": len(results) >= limit
-                    }
-                    
+                    rows_raw = cursor.fetchall()
                 finally:
                     cursor.close()
-                
+
+            results = []
+            for row in rows_raw:
+                row_dict: Dict[str, Any] = {}
+                for i, col_name in enumerate(columns):
+                    value = row[i]
+                    if hasattr(value, "isoformat"):
+                        value = value.isoformat()
+                    elif isinstance(value, (bytes, bytearray)):
+                        value = value.hex()
+                    row_dict[col_name] = value
+                results.append(row_dict)
+
+            logger.info(f"Queried view {view_name}: {len(results)} rows returned")
+
+            safe_params = {k: str(v) for k, v in bind_params.items()}
+            return {
+                "success": True,
+                "view_name": view_name,
+                "columns": columns,
+                "rows": results,
+                "row_count": len(results),
+                "limited": len(results) >= effective_limit,
+                "executed_sql": sql,
+                "parameters": safe_params,
+            }
+
         except (ValidationError, DatabaseError, TimeoutError):
-            # Re-raise our custom exceptions
             raise
         except oracledb.Error as e:
             error_obj, = e.args
             log_error_with_context(e, {
                 "view_name": view_name,
-                "where_clause": where_clause,
-                "error_code": error_obj.code if hasattr(error_obj, 'code') else None
+                "error_code": error_obj.code if hasattr(error_obj, "code") else None,
             })
             raise DatabaseError(
                 f"Database error: {error_obj.message if hasattr(error_obj, 'message') else str(e)}",
-                details={"view_name": view_name}
+                details={"view_name": view_name},
             )
         except Exception as e:
-            log_error_with_context(e, {
-                "view_name": view_name,
-                "where_clause": where_clause
-            })
+            log_error_with_context(e, {"view_name": view_name})
             raise DatabaseError(f"Unexpected error: {str(e)}")
     
     def get_available_tools(self) -> List[Dict[str, Any]]:
         """
-        Get MCP tool definitions for this server.
-        
-        Returns:
-            List of tool definitions in MCP format
+        Return MCP tool definitions for the LLM.
+
+        query_view no longer accepts a free-form where_clause parameter.
+        Filters must be provided as a structured list of {column, operator,
+        value} objects.
         """
         return [
             {
                 "name": "query_view",
-                "description": "Execute a SELECT query on a whitelisted Oracle database view",
+                "description": (
+                    "Execute a safe SELECT query on a whitelisted Oracle APEX view. "
+                    "Filters must be structured objects — free-form SQL is not accepted. "
+                    "Supported operators: =, <, >, <=, >=, BETWEEN (value is a 2-element list), "
+                    "IN (value is a list).  Call describe_view first to confirm column names."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "view_name": {
                             "type": "string",
-                            "description": "Name of the view to query"
+                            "description": "Name of the allow-listed view to query",
                         },
-                        "where_clause": {
-                            "type": "string",
-                            "description": "Optional WHERE clause (without the WHERE keyword)"
+                        "filters": {
+                            "type": "array",
+                            "description": "Optional WHERE filters (AND-combined)",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "column": {"type": "string"},
+                                    "operator": {
+                                        "type": "string",
+                                        "enum": ["=", "<", ">", "<=", ">=", "BETWEEN", "IN"],
+                                    },
+                                    "value": {
+                                        "description": (
+                                            "Scalar for =/</>/<=/>=; "
+                                            "list of 2 for BETWEEN; "
+                                            "non-empty list for IN"
+                                        )
+                                    },
+                                },
+                                "required": ["column", "operator", "value"],
+                            },
                         },
                         "limit": {
                             "type": "integer",
-                            "description": "Maximum number of rows to return"
-                        }
+                            "description": f"Maximum number of rows to return (server cap: {self.max_result_size})",
+                        },
                     },
-                    "required": ["view_name"]
-                }
+                    "required": ["view_name"],
+                },
             },
             {
                 "name": "list_views",
-                "description": "List all available database views that can be queried",
+                "description": "List all available Oracle APEX views that can be queried",
                 "parameters": {
                     "type": "object",
-                    "properties": {}
-                }
+                    "properties": {},
+                },
             },
             {
                 "name": "describe_view",
-                "description": "Get schema information (columns, types) for a specific view",
+                "description": (
+                    "Get column names and types for a specific Oracle APEX view. "
+                    "Call this once per view per conversation before querying it."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "view_name": {
                             "type": "string",
-                            "description": "Name of the view to describe"
+                            "description": "Name of the view to describe",
                         }
                     },
-                    "required": ["view_name"]
-                }
-            }
+                    "required": ["view_name"],
+                },
+            },
         ]
-    
+
     def execute_tool(self, tool_name: str, parameters: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Execute an MCP tool by name.
-        
+        Dispatch an MCP tool call by name.
+
         Args:
-            tool_name: Name of the tool to execute
-            parameters: Tool parameters
-            
+            tool_name:  One of query_view | list_views | describe_view.
+            parameters: Tool parameters dict.
+
         Returns:
-            Tool execution result
+            Tool result dict.
         """
         if tool_name == "query_view":
             return self.query_view(
                 view_name=parameters.get("view_name"),
-                where_clause=parameters.get("where_clause"),
-                limit=parameters.get("limit")
+                filters=parameters.get("filters"),
+                limit=parameters.get("limit"),
             )
         elif tool_name == "list_views":
             return self.list_views()
@@ -563,5 +687,5 @@ class OracleMCPServer:
         else:
             return {
                 "success": False,
-                "error": f"Unknown tool: {tool_name}"
+                "error": f"Unknown tool: {tool_name}",
             }
