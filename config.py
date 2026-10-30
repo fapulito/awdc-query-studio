@@ -93,6 +93,12 @@ class Config:
     AUTH0_CLIENT_SECRET: str = os.getenv('AUTH0_CLIENT_SECRET', '')
     AUTH0_DOMAIN: str = os.getenv('AUTH0_DOMAIN', '')
     
+    # Stripe Billing Configuration
+    STRIPE_SECRET_KEY: str = os.getenv('STRIPE_SECRET_KEY', '')
+    STRIPE_PRO_PRICE_ID: str = os.getenv('STRIPE_PRO_PRICE_ID', '')
+    STRIPE_WEBHOOK_SECRET: str = os.getenv('STRIPE_WEBHOOK_SECRET', '')
+    STRIPE_TEST_MODE: bool = os.getenv('STRIPE_SECRET_KEY', '').startswith('sk_test_')
+    
     @classmethod
     def validate(cls) -> None:
         """

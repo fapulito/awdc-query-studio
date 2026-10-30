@@ -23,3 +23,6 @@ requests==2.31.0
 
 # WSGI Server for Vercel
 Werkzeug==3.0.1
+
+# Stripe Billing
+stripe>=8.0.0

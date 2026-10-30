@@ -26,6 +26,7 @@ from modules.error_handler import (
 from modules.oauth2_manager import OAuth2Manager
 from modules.auth_decorator import require_auth, require_api_auth
 from modules.activity_tracker import get_activity_tracker
+import modules.billing as billing
 
 # Load environment variables
 load_dotenv()
@@ -737,7 +738,29 @@ def chat():
                 'message': 'Message cannot be empty',
                 'code': 'EMPTY_MESSAGE'
             }), 400
-        
+
+        # Billing: check plan limit before processing
+        try:
+            _email = session.get('user', {}).get('email', '')
+            if _email:
+                _allowed, _used, _limit = billing.check_limit(_email)
+                if not _allowed:
+                    _tier = billing.get_or_create_user(_email).get('tier', 'free')
+                    return jsonify({
+                        'error': 'Plan limit reached',
+                        'message': (
+                            f"You have reached your {_used}-question monthly limit. "
+                            "Upgrade to Pro for more."
+                        ),
+                        'upgrade_url': '/pricing',
+                        'response': (
+                            f"You've used all {_limit} questions in your {_tier} plan this month. "
+                            "Visit /pricing to upgrade to Pro."
+                        ),
+                    }), 402
+        except Exception as _billing_exc:
+            logger.warning(f"Billing check failed (fail open): {_billing_exc}")
+
         # Initialize or validate session
         session_id = session_manager.initialize_session()
         logger.info(
@@ -850,7 +873,15 @@ def chat():
                 'response_length': len(response_content)
             }
         )
-        
+
+        # Billing: record successful question
+        try:
+            _email = session.get('user', {}).get('email', '')
+            if _email:
+                billing.record_question(_email)
+        except Exception as _billing_exc:
+            logger.warning(f"Billing record failed (fail open): {_billing_exc}")
+
         return jsonify({
             'response': assistant_message.content,
             'timestamp': assistant_message.timestamp,
@@ -1139,6 +1170,82 @@ def get_analytics():
             'message': 'Failed to retrieve analytics',
             'code': 'ANALYTICS_ERROR'
         }), 500
+
+
+# ---------------------------------------------------------------------------
+# Pricing page
+# ---------------------------------------------------------------------------
+
+@app.route('/pricing', methods=['GET'])
+def pricing():
+    """Show the freemium pricing page."""
+    user = session.get('user')
+    metadata = MetadataConfig.to_dict()
+    return render_template('pricing.html', user=user, metadata=metadata)
+
+
+# ---------------------------------------------------------------------------
+# Stripe billing routes
+# ---------------------------------------------------------------------------
+
+@app.route('/billing/create-checkout-session', methods=['POST'])
+@require_auth
+def create_checkout_session():
+    """Create a Stripe Checkout session for the Pro plan."""
+    try:
+        import stripe as _stripe
+        _stripe.api_key = Config.STRIPE_SECRET_KEY
+        user_email = session.get('user', {}).get('email', '')
+        base_url = request.host_url.rstrip('/')
+        checkout = _stripe.checkout.Session.create(
+            mode='subscription',
+            line_items=[{'price': Config.STRIPE_PRO_PRICE_ID, 'quantity': 1}],
+            customer_email=user_email,
+            success_url=base_url + '/?billing=success',
+            cancel_url=base_url + '/pricing?billing=cancelled',
+        )
+        return jsonify({'url': checkout.url})
+    except Exception as e:
+        logger.error(f"Stripe checkout creation failed: {e}")
+        return jsonify({'error': 'Failed to create checkout session'}), 500
+
+
+@app.route('/billing/webhook', methods=['POST'])
+def stripe_webhook():
+    """Handle Stripe webhook events (no auth — Stripe calls this directly)."""
+    try:
+        import stripe as _stripe
+        _stripe.api_key = Config.STRIPE_SECRET_KEY
+        payload = request.get_data()
+        sig_header = request.headers.get('Stripe-Signature', '')
+        event = _stripe.Webhook.construct_event(
+            payload, sig_header, Config.STRIPE_WEBHOOK_SECRET
+        )
+    except Exception as e:
+        logger.warning(f"Stripe webhook verification failed: {e}")
+        return jsonify({'error': 'Invalid webhook'}), 400
+
+    try:
+        if event['type'] == 'checkout.session.completed':
+            customer_email = event['data']['object'].get('customer_email')
+            if customer_email:
+                billing.set_tier(customer_email, 'pro')
+                logger.info(f"Upgraded {customer_email} to pro via Stripe webhook")
+        elif event['type'] == 'customer.subscription.deleted':
+            import stripe as _stripe2
+            _stripe2.api_key = Config.STRIPE_SECRET_KEY
+            customer_id = event['data']['object'].get('customer')
+            if customer_id:
+                customer = _stripe2.Customer.retrieve(customer_id)
+                customer_email = customer.get('email')
+                if customer_email:
+                    billing.set_tier(customer_email, 'free')
+                    logger.info(f"Downgraded {customer_email} to free via Stripe webhook")
+    except Exception as e:
+        logger.error(f"Error processing Stripe webhook event: {e}")
+        return jsonify({'error': 'Webhook handler error'}), 500
+
+    return jsonify({'status': 'ok'})
 
 
 @app.errorhandler(404)

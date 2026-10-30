@@ -51,3 +51,7 @@ pdf_index.db
 # Ziggy Bob Advice
 analytics/*.jsonl
 submission-form-text-2026-10-18.md
+
+# Added 10/29/26 as per Ziggy 
+
+bob_sessions/
