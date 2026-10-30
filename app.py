@@ -822,7 +822,7 @@ def chat():
         
         # Process conversation with LLM
         try:
-            response_content, tool_calls = llm_service.process_conversation(
+            response_content, tool_calls, queries = llm_service.process_conversation(
                 conversation_history=conversation_dict[:-1],  # Exclude the just-added user message
                 available_tools=available_tools,
                 tool_executor=mcp_client.execute_tool if mcp_client else lambda **kwargs: None,
@@ -845,6 +845,7 @@ def chat():
             )
             response_content = get_user_friendly_message(e)
             tool_calls = []
+            queries = []
         except Exception as e:
             log_error_with_context(e, {
                 'request_id': request_id,
@@ -853,6 +854,7 @@ def chat():
             })
             response_content = "I apologize, but I'm having trouble processing your request right now. Please try again later."
             tool_calls = []
+            queries = []
         
         # Add assistant response to conversation history
         assistant_message = session_manager.add_message(
@@ -887,7 +889,8 @@ def chat():
             'timestamp': assistant_message.timestamp,
             'session_id': session_id,
             'message_count': message_count,
-            'tool_calls_count': len(tool_calls) if tool_calls else 0
+            'tool_calls_count': len(tool_calls) if tool_calls else 0,
+            'queries': queries if queries else [],
         }), 200
         
     except ChatbotError as e:

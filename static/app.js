@@ -76,7 +76,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Display assistant response
             if (data.response) {
-                addMessageToDisplay('assistant', data.response);
+                addMessageToDisplay('assistant', data.response, data.queries || []);
             } else {
                 throw new Error('No response received from server');
             }
@@ -99,7 +99,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function addMessageToDisplay(role, content) {
+    function addMessageToDisplay(role, content, queries) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}-message`;
         
@@ -113,17 +113,114 @@ document.addEventListener('DOMContentLoaded', function() {
             messageContent.textContent = content;
         }
         
+        messageDiv.appendChild(messageContent);
+
+        // "View SQL" transparency toggle — only for assistant messages with queries
+        if (role === 'assistant' && Array.isArray(queries) && queries.length > 0) {
+            messageDiv.appendChild(buildSqlToggle(queries));
+        }
+        
         const timestamp = document.createElement('div');
         timestamp.className = 'message-timestamp';
         timestamp.textContent = new Date().toLocaleTimeString();
         
-        messageDiv.appendChild(messageContent);
         messageDiv.appendChild(timestamp);
         
         conversationDisplay.appendChild(messageDiv);
         
         // Scroll to bottom
         conversationDisplay.scrollTop = conversationDisplay.scrollHeight;
+    }
+
+    /**
+     * Build a collapsed "View SQL" disclosure widget for the given queries array.
+     * Each entry: {table, sql, parameters, row_count}
+     * The widget is closed by default; clicking the toggle opens/closes it.
+     */
+    function buildSqlToggle(queries) {
+        const wrapper = document.createElement('div');
+        wrapper.className = 'sql-toggle-wrapper';
+
+        const toggle = document.createElement('button');
+        toggle.className = 'sql-toggle-btn';
+        toggle.setAttribute('aria-expanded', 'false');
+        toggle.innerHTML =
+            '<svg class="sql-toggle-icon" width="12" height="12" viewBox="0 0 24 24" ' +
+            'fill="none" stroke="currentColor" stroke-width="2.5" ' +
+            'stroke-linecap="round" stroke-linejoin="round">' +
+            '<polyline points="9 18 15 12 9 6"></polyline></svg>' +
+            ' View SQL';
+
+        const body = document.createElement('div');
+        body.className = 'sql-toggle-body';
+        body.style.display = 'none';
+
+        queries.forEach(function(q, idx) {
+            const block = document.createElement('div');
+            block.className = 'sql-block';
+
+            // Table + row count header
+            const header = document.createElement('div');
+            header.className = 'sql-block-header';
+            header.textContent = q.table + ' \u2014 ' + q.row_count + ' row' + (q.row_count !== 1 ? 's' : '');
+            block.appendChild(header);
+
+            // SQL pre with copy button
+            const preWrap = document.createElement('div');
+            preWrap.className = 'sql-pre-wrap';
+
+            const pre = document.createElement('pre');
+            pre.className = 'sql-pre';
+            pre.textContent = q.sql;
+            preWrap.appendChild(pre);
+
+            const copyBtn = document.createElement('button');
+            copyBtn.className = 'sql-copy-btn';
+            copyBtn.title = 'Copy SQL';
+            copyBtn.innerHTML =
+                '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+                'stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+                '<rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>' +
+                '<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>' +
+                '</svg>';
+            copyBtn.addEventListener('click', function() {
+                navigator.clipboard.writeText(q.sql).then(function() {
+                    copyBtn.title = 'Copied!';
+                    setTimeout(function() { copyBtn.title = 'Copy SQL'; }, 1500);
+                }).catch(function() {
+                    // Fallback for browsers without clipboard API
+                    const ta = document.createElement('textarea');
+                    ta.value = q.sql;
+                    document.body.appendChild(ta);
+                    ta.select();
+                    document.execCommand('copy');
+                    document.body.removeChild(ta);
+                });
+            });
+            preWrap.appendChild(copyBtn);
+            block.appendChild(preWrap);
+
+            // Parameters line (only when non-empty)
+            if (Array.isArray(q.parameters) && q.parameters.length > 0) {
+                const params = document.createElement('div');
+                params.className = 'sql-params';
+                params.textContent = 'Parameters: ' + q.parameters.join(', ');
+                block.appendChild(params);
+            }
+
+            body.appendChild(block);
+        });
+
+        toggle.addEventListener('click', function() {
+            const open = body.style.display !== 'none';
+            body.style.display = open ? 'none' : 'block';
+            toggle.setAttribute('aria-expanded', String(!open));
+            toggle.querySelector('.sql-toggle-icon').style.transform = open ? '' : 'rotate(90deg)';
+        });
+
+        wrapper.appendChild(toggle);
+        wrapper.appendChild(body);
+        return wrapper;
     }
 
     function formatMarkdown(text) {

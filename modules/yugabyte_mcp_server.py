@@ -720,6 +720,10 @@ class YugabyteMCPServer:
 
         logger.info(f"YugabyteDB query on '{table_name}': {len(rows)} rows returned")
 
+        # Serialise params to JSON-safe strings for transparency reporting.
+        # The list is a copy — we never mutate what was passed to execute.
+        safe_params = [str(p) for p in params]
+
         return {
             "success": True,
             "table_name": table_name,
@@ -727,6 +731,8 @@ class YugabyteMCPServer:
             "rows": rows,
             "row_count": len(rows),
             "limited": len(rows) >= effective_limit,
+            "executed_sql": sql,
+            "parameters": safe_params,
         }
 
     # ------------------------------------------------------------------
