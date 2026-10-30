@@ -1,19 +1,24 @@
 """
-Flask Chatbot Application with MCP Integration
-Main application file with routes and configuration
+api/index.py — Vercel serverless entry point.
+
+Service globals and route decorators live here so that the test suite can
+patch them via idx_module.mcp_client = ... etc.
+Route bodies are delegated to modules.app_core.impl_* helpers.
+
+The sys.path insert is required because this file is one directory below the
+repo root, but all modules live at the root level.
 """
 
 import os
 import sys
-import logging
 import time
-from datetime import datetime, timedelta
-from typing import Dict, List, Optional
+from datetime import timedelta
+from typing import Optional
 
-# Add parent directory to path for imports
+# Add repo root to path so all modules are importable
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from flask import Flask, request, jsonify, session, render_template, g, redirect, url_for
+from flask import Flask, redirect, url_for
 from dotenv import load_dotenv
 from config import Config, MetadataConfig, validate_config_on_startup
 from modules.session_manager import SessionManager
@@ -23,56 +28,63 @@ from modules.apex_rest_handler import ApexRestHandler, register_apex_routes
 from modules.oracle_mcp_server import OracleMCPServer
 from modules.pdf_mcp_server import PDFMCPServer
 from modules.yugabyte_mcp_server import YugabyteMCPServer
-from modules.logging_config import configure_from_env, RequestLoggingContext, get_logger
-from modules.error_handler import (
-    format_error_response, get_user_friendly_message,
-    ChatbotError, log_error_with_context
-)
+from modules.logging_config import configure_from_env, get_logger
 from modules.oauth2_manager import OAuth2Manager
 from modules.auth_decorator import require_auth, require_api_auth
 from modules.activity_tracker import get_activity_tracker
-import modules.billing as billing
+from modules.app_core import (
+    create_app,
+    impl_login, impl_auth_redirect, impl_auth_callback, impl_logout,
+    impl_get_user, impl_index, impl_chat,
+    impl_get_history, impl_clear_history, impl_health, impl_warmup,
+    impl_analytics_dashboard, impl_get_analytics,
+    impl_pricing, impl_create_checkout_session, impl_stripe_webhook,
+)
 
-# Load environment variables
+# ---------------------------------------------------------------------------
+# Bootstrap
+# ---------------------------------------------------------------------------
+
 load_dotenv()
-
-# Validate configuration at startup (Requirements: 6.1, 6.3, 6.5)
 validate_config_on_startup()
-
-# Configure logging from environment
 configure_from_env()
 logger = get_logger(__name__)
-
-# Log safe configuration for debugging
 logger.info("Application configuration loaded", extra={'config': Config.get_safe_config()})
 
-# Initialize Flask application
-# For Vercel: templates and static folders are in parent directory
-app = Flask(__name__, 
-            template_folder='../templates',
-            static_folder='../static')
+# ---------------------------------------------------------------------------
+# Flask application (template/static paths absolute, relative to repo root)
+# ---------------------------------------------------------------------------
 
-# Initialize session manager
-session_manager = SessionManager()
+_HERE = os.path.dirname(os.path.abspath(__file__))
+_ROOT = os.path.dirname(_HERE)
+app = create_app(
+    template_folder=os.path.join(_ROOT, 'templates'),
+    static_folder=os.path.join(_ROOT, 'static'),
+)
 
-# Initialize OAuth2 manager
-oauth2_manager = None
+# ---------------------------------------------------------------------------
+# Service globals (patched by tests via idx_module.mcp_client = ... etc.)
+# ---------------------------------------------------------------------------
 
-# Initialize MCP client and LLM service (module-level caching)
-# These are module-level variables for connection caching across invocations
 mcp_client = None
 llm_service = None
 oracle_server = None
 pdf_server = None
 yugabyte_server = None
 apex_handler = None
+oauth2_manager = OAuth2Manager(app)
 
-# Cache for initialization status to avoid repeated attempts
+try:
+    activity_tracker = get_activity_tracker()
+    logger.info("Activity tracker initialized successfully")
+except Exception as _e:
+    logger.error(f"Failed to initialize activity tracker: {_e}", exc_info=True)
+    activity_tracker = None
+
 _initialization_attempted = False
 _initialization_timestamp = None
 _services_initialized = False
 
-# Initialization timing metrics
 _init_metrics = {
     'total_time': 0.0,
     'llm_service_time': 0.0,
@@ -82,1150 +94,268 @@ _init_metrics = {
     'mcp_client_time': 0.0,
     'apex_handler_time': 0.0,
     'cold_start': True,
-    'initialization_count': 0
+    'initialization_count': 0,
 }
 
-# Configuration using centralized Config class (Requirements: 6.1, 6.3)
-app.config['SECRET_KEY'] = Config.SECRET_KEY
-app.config['SESSION_TYPE'] = 'filesystem'
-app.config['SESSION_COOKIE_SECURE'] = Config.FLASK_ENV == 'production'
-app.config['SESSION_COOKIE_HTTPONLY'] = True
-app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
-app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(seconds=Config.SESSION_TIMEOUT)
-
-# Initialize OAuth2 manager after app configuration
-oauth2_manager = OAuth2Manager(app)
-
-# Initialize activity tracker
-try:
-    activity_tracker = get_activity_tracker()
-    logger.info("Activity tracker initialized successfully")
-except Exception as e:
-    logger.error(f"Failed to initialize activity tracker: {str(e)}", exc_info=True)
-    activity_tracker = None
-
+# ---------------------------------------------------------------------------
+# Service initialization
+# ---------------------------------------------------------------------------
 
 def initialize_services():
     """
-    Initialize MCP client, LLM service, and APEX handlers with caching
-    Uses module-level caching to avoid re-initialization on every request
-    Tracks timing metrics for performance monitoring
+    Initialize MCP client, LLM service, and APEX handlers with caching.
     Requirements: 2.4, 2.5
     """
     global mcp_client, llm_service, oracle_server, pdf_server, yugabyte_server, apex_handler
     global _initialization_attempted, _initialization_timestamp, _services_initialized
     global _init_metrics
-    
-    # If services are already initialized, return immediately (warm start)
+
     if _services_initialized:
         logger.debug("Services already initialized (warm start), skipping")
         _init_metrics['cold_start'] = False
         return
-    
-    # Track if this is a cold start
+
     is_cold_start = _init_metrics['initialization_count'] == 0
     _init_metrics['cold_start'] = is_cold_start
     _init_metrics['initialization_count'] += 1
-    
-    logger.info(f"Initializing services ({'cold start' if is_cold_start else 'warm start'})...")
+
+    logger.info(
+        f"Initializing services ({'cold start' if is_cold_start else 'warm start'})..."
+    )
     total_start = time.time()
     current_time = time.time()
-    
-    # Initialize LLM service first (critical dependency)
+
     if llm_service is None:
         try:
             llm_start = time.time()
             logger.info("Initializing LLM service")
             llm_service = create_llm_service_from_env()
-            llm_elapsed = time.time() - llm_start
-            _init_metrics['llm_service_time'] = llm_elapsed
-            logger.info(f"LLM service initialized in {llm_elapsed:.3f}s")
-            # Mark initialization as successful
+            _init_metrics['llm_service_time'] = time.time() - llm_start
+            logger.info(f"LLM service initialized in {_init_metrics['llm_service_time']:.3f}s")
             _initialization_attempted = True
             _initialization_timestamp = current_time
-        except Exception as e:
-            logger.error(f"Failed to initialize LLM service: {str(e)}")
-            # Reset cache flags so we can retry
+        except Exception as exc:
+            logger.error(f"Failed to initialize LLM service: {exc}")
             _initialization_attempted = False
             _initialization_timestamp = None
-            raise  # LLM service is critical
-    
-    # Initialize Oracle MCP Server (optional) using Config
+            raise
+
     if oracle_server is None and Config.is_oracle_enabled():
         try:
-            oracle_start = time.time()
-            logger.info("Initializing Oracle MCP Server")
+            t = time.time()
             oracle_server = OracleMCPServer()
-            oracle_elapsed = time.time() - oracle_start
-            _init_metrics['oracle_server_time'] = oracle_elapsed
-            logger.info(f"Oracle MCP Server initialized in {oracle_elapsed:.3f}s")
-        except Exception as e:
-            logger.warning(f"Oracle MCP Server not available: {str(e)}")
+            _init_metrics['oracle_server_time'] = time.time() - t
+            logger.info(f"Oracle MCP Server initialized in {_init_metrics['oracle_server_time']:.3f}s")
+        except Exception as exc:
+            logger.warning(f"Oracle MCP Server not available: {exc}")
 
-    # Initialize YugabyteDB MCP Server (optional)
     if yugabyte_server is None and os.getenv('YUGABYTE_HOST'):
         try:
-            yb_start = time.time()
-            logger.info("Initializing YugabyteDB MCP Server")
+            t = time.time()
             yugabyte_server = YugabyteMCPServer()
-            yb_elapsed = time.time() - yb_start
-            _init_metrics['yugabyte_server_time'] = yb_elapsed
-            logger.info(f"YugabyteDB MCP Server initialized in {yb_elapsed:.3f}s")
-        except Exception as e:
-            logger.warning(f"YugabyteDB MCP Server not available: {str(e)}")
+            _init_metrics['yugabyte_server_time'] = time.time() - t
+            logger.info(f"YugabyteDB MCP Server initialized in {_init_metrics['yugabyte_server_time']:.3f}s")
+        except Exception as exc:
+            logger.warning(f"YugabyteDB MCP Server not available: {exc}")
 
-    # Initialize PDF MCP Server
     if pdf_server is None:
         try:
-            pdf_start = time.time()
-            logger.info("Initializing PDF MCP Server")
+            t = time.time()
             pdf_server = PDFMCPServer()
-            pdf_elapsed = time.time() - pdf_start
-            _init_metrics['pdf_server_time'] = pdf_elapsed
-            logger.info(f"PDF MCP Server initialized in {pdf_elapsed:.3f}s")
-        except Exception as e:
-            logger.error(f"Failed to initialize PDF MCP Server: {str(e)}")
-    
-    # Initialize MCP client (skip connection attempts to avoid lag)
+            _init_metrics['pdf_server_time'] = time.time() - t
+            logger.info(f"PDF MCP Server initialized in {_init_metrics['pdf_server_time']:.3f}s")
+        except Exception as exc:
+            logger.error(f"Failed to initialize PDF MCP Server: {exc}")
+
     if mcp_client is None:
         try:
-            mcp_start = time.time()
-            logger.info("Initializing MCP client (without server connections)")
+            t = time.time()
             mcp_client = create_mcp_client_from_env()
-            # Skip connect_servers() to avoid connection retry delays
-            # Servers will connect on-demand when tools are actually used
-            mcp_elapsed = time.time() - mcp_start
-            _init_metrics['mcp_client_time'] = mcp_elapsed
-            logger.info(f"MCP client initialized in {mcp_elapsed:.3f}s (lazy connection mode)")
-        except Exception as e:
-            logger.error(f"Failed to initialize MCP client: {str(e)}")
-            # Continue without MCP client - will work in degraded mode
+            _init_metrics['mcp_client_time'] = time.time() - t
+            logger.info(f"MCP client initialized in {_init_metrics['mcp_client_time']:.3f}s (lazy connection mode)")
+        except Exception as exc:
+            logger.error(f"Failed to initialize MCP client: {exc}")
 
-    # Register in-process servers so their tools are offered to the LLM
-    # without requiring an HTTP sidecar process.
     if mcp_client is not None and yugabyte_server is not None:
         if not any(t.startswith('yb_') for t in mcp_client.available_tools):
             mcp_client.register_in_process_server('yugabyte', yugabyte_server)
             logger.info("YugabyteDB in-process server registered with MCP client")
-    
-    # Initialize APEX REST handler
+
     if apex_handler is None and llm_service is not None:
         try:
-            apex_start = time.time()
-            logger.info("Initializing APEX REST handler")
-            apex_handler = ApexRestHandler(oracle_server, pdf_server, llm_service, yugabyte_server)
-            apex_elapsed = time.time() - apex_start
-            _init_metrics['apex_handler_time'] = apex_elapsed
-            logger.info(f"APEX REST handler initialized in {apex_elapsed:.3f}s")
-        except Exception as e:
-            logger.error(f"Failed to initialize APEX REST handler: {str(e)}")
-    
-    # Calculate total initialization time
-    total_elapsed = time.time() - total_start
-    _init_metrics['total_time'] = total_elapsed
-    
-    # Mark services as fully initialized
+            t = time.time()
+            apex_handler = ApexRestHandler(
+                oracle_server, pdf_server, llm_service, yugabyte_server
+            )
+            _init_metrics['apex_handler_time'] = time.time() - t
+            logger.info(f"APEX REST handler initialized in {_init_metrics['apex_handler_time']:.3f}s")
+        except Exception as exc:
+            logger.error(f"Failed to initialize APEX REST handler: {exc}")
+
+    _init_metrics['total_time'] = time.time() - total_start
     _services_initialized = True
-    
-    # Log detailed metrics
     logger.info(
-        f"All services initialized successfully in {total_elapsed:.3f}s "
+        f"All services initialized successfully in {_init_metrics['total_time']:.3f}s "
         f"({'cold start' if is_cold_start else 'warm start'})",
-        extra={
-            'initialization_metrics': _init_metrics,
-            'cold_start': is_cold_start
-        }
+        extra={'initialization_metrics': _init_metrics, 'cold_start': is_cold_start},
     )
 
 
 def warmup_services():
-    """
-    Warmup function to pre-initialize all services at application startup
-    This reduces cold start latency by initializing services before first request
-    Requirements: 2.4
-    """
+    """Warmup function to pre-initialize all services. Requirements: 2.4"""
     logger.info("Starting service warmup...")
     start_time = time.time()
-    
     try:
         initialize_services()
         elapsed = time.time() - start_time
         logger.info(
             f"Service warmup completed in {elapsed:.3f}s",
-            extra={'warmup_time': elapsed, 'metrics': _init_metrics}
+            extra={'warmup_time': elapsed, 'metrics': _init_metrics},
         )
         return True
-    except Exception as e:
+    except Exception as exc:
         elapsed = time.time() - start_time
         logger.error(
-            f"Service warmup failed after {elapsed:.3f}s: {str(e)}",
-            extra={'warmup_time': elapsed, 'error': str(e)}
+            f"Service warmup failed after {elapsed:.3f}s: {exc}",
+            extra={'warmup_time': elapsed, 'error': str(exc)},
         )
         return False
 
 
 def get_initialization_metrics():
-    """
-    Get initialization timing metrics for monitoring and debugging
-    
-    Returns:
-        Dictionary containing initialization metrics
-    """
+    """Return initialization timing metrics for monitoring."""
     return {
         **_init_metrics,
         'services_initialized': _services_initialized,
-        'initialization_timestamp': _initialization_timestamp
+        'initialization_timestamp': _initialization_timestamp,
     }
 
 
-@app.before_request
-def before_request():
-    """
-    Setup request context and logging before each request
-    Requirements: 1.5, 6.3, 6.2
-    """
-    # Store request start time for duration tracking
-    g.start_time = time.time()
-    
-    # Generate request ID for tracking
-    import uuid
-    g.request_id = str(uuid.uuid4())
-    
-    # Skip session check for static files and health endpoint
-    if request.path.startswith('/static/') or request.path == '/api/health':
-        return
-    
-    # Check if session exists and is expired
-    if 'session_id' in session and not session_manager.is_session_valid():
-        logger.info(f"Session {session['session_id']} expired, cleaning up")
-        session_manager.cleanup_session()
-
-
-@app.after_request
-def after_request(response):
-    """
-    Log request/response information after each request
-    Requirements: 6.2
-    """
-    # Calculate request duration
-    if hasattr(g, 'start_time'):
-        duration_ms = (time.time() - g.start_time) * 1000
-    else:
-        duration_ms = 0
-    
-    # Log request/response
-    request_id = getattr(g, 'request_id', None)
-    session_id = session.get('session_id')
-    
-    logger.info(
-        f"Request completed: {request.method} {request.path} - "
-        f"Status: {response.status_code}, Duration: {duration_ms:.2f}ms",
-        extra={
-            'request_id': request_id,
-            'session_id': session_id,
-            'method': request.method,
-            'path': request.path,
-            'status_code': response.status_code,
-            'duration_ms': duration_ms
-        }
-    )
-    
-    return response
-
-
-@app.route('/login', methods=['GET'])
-def login():
-    """
-    Display login page with OAuth2 provider options.
-    Requirements: 1.1
-    """
-    try:
-        # Get list of configured providers
-        providers = oauth2_manager.get_configured_providers()
-        
-        # Get error message from query params if present
-        error_message = request.args.get('error')
-        
-        return render_template('login.html', providers=providers, error=error_message, metadata=MetadataConfig.to_dict())
-    except Exception as e:
-        logger.error(f"Error serving login page: {str(e)}")
-        return jsonify({
-            'error': True,
-            'message': 'Unable to load login page',
-            'code': 'TEMPLATE_ERROR'
-        }), 500
-
-
-@app.route('/auth/<provider>', methods=['GET'])
-def auth_redirect(provider: str):
-    """
-    Initiate OAuth2 flow by redirecting to provider's authorization page.
-    
-    Args:
-        provider: OAuth2 provider name (google, github, facebook, linkedin, auth0)
-        
-    Requirements: 1.1
-    """
-    try:
-        # Check if provider is configured
-        if not oauth2_manager.is_provider_configured(provider):
-            logger.warning(f"Attempt to authenticate with unconfigured provider: {provider}")
-            return redirect(url_for('login', error=f'Provider {provider} is not configured'))
-        
-        # Generate callback URL
-        redirect_uri = url_for('auth_callback', provider=provider, _external=True)
-        
-        # Create authorization URL and store state in session
-        authorization_url, state = oauth2_manager.create_authorization_url(provider, redirect_uri)
-        
-        logger.info(f"Redirecting to {provider} for authentication")
-        
-        # Redirect to provider's authorization page
-        return authorization_url
-        
-    except Exception as e:
-        logger.error(f"Error initiating OAuth2 flow for {provider}: {str(e)}")
-        return redirect(url_for('login', error='Failed to initiate authentication'))
-
-
-@app.route('/callback/<provider>', methods=['GET'])
-def auth_callback(provider: str):
-    """
-    Handle OAuth2 callback from provider after user authorization.
-    
-    Args:
-        provider: OAuth2 provider name (google, github, facebook, linkedin, auth0)
-        
-    Requirements: 1.2, 1.3, 1.4
-    """
-    try:
-        # Get state parameter from callback
-        state = request.args.get('state')
-        
-        # Validate state to prevent CSRF attacks
-        if not state or not oauth2_manager.validate_state(state):
-            logger.warning(f"Invalid state parameter in OAuth2 callback for {provider}")
-            oauth2_manager.clear_session_state()
-            return redirect(url_for('login', error='Invalid authentication state. Please try again.'))
-        
-        # Check for error from provider
-        error = request.args.get('error')
-        if error:
-            error_description = request.args.get('error_description', 'Authentication failed')
-            logger.warning(f"OAuth2 error from {provider}: {error} - {error_description}")
-            oauth2_manager.clear_session_state()
-            return redirect(url_for('login', error=f'Authentication failed: {error_description}'))
-        
-        # Exchange authorization code for access token
-        try:
-            token = oauth2_manager.exchange_code_for_token(provider, request.url)
-        except Exception as e:
-            logger.error(f"Failed to exchange code for token with {provider}: {str(e)}")
-            oauth2_manager.clear_session_state()
-            return redirect(url_for('login', error='Failed to complete authentication'))
-        
-        # Retrieve user information from provider
-        try:
-            user_info = oauth2_manager.get_user_info(provider, token)
-        except Exception as e:
-            logger.error(f"Failed to retrieve user info from {provider}: {str(e)}")
-            oauth2_manager.clear_session_state()
-            return redirect(url_for('login', error='Failed to retrieve user information'))
-        
-        # Store user data and token in session
-        session['user'] = user_info
-        session['access_token'] = token.get('access_token')
-        
-        # Calculate token expiration (default to 1 hour if not provided)
-        expires_in = token.get('expires_in', Config.OAUTH2_TOKEN_EXPIRATION)
-        session['token_expires_at'] = datetime.utcnow().timestamp() + expires_in
-        
-        # Store login timestamp for session duration tracking
-        session['login_timestamp'] = datetime.utcnow().timestamp()
-        
-        # Mark session as permanent to respect PERMANENT_SESSION_LIFETIME
-        session.permanent = True
-        
-        # Clear OAuth2 state from session
-        oauth2_manager.clear_session_state()
-        
-        # Log successful authentication
-        logger.info(
-            f"User authenticated successfully via {provider}",
-            extra={
-                'provider': provider,
-                'user_id': user_info.get('id'),
-                'user_email': user_info.get('email')
-            }
-        )
-        
-        # Track login activity
-        if activity_tracker:
-            try:
-                activity_tracker.log_login(
-                    user_id=user_info.get('id', user_info.get('email', 'unknown')),
-                    provider=provider,
-                    metadata={
-                        'user_agent': request.headers.get('User-Agent', 'unknown'),
-                        'ip_address': request.remote_addr
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Failed to log login activity: {str(e)}")
-        
-        # Redirect to original requested URL or home page
-        next_url = session.pop('next_url', None)
-        if next_url:
-            return redirect(next_url)
-        else:
-            return redirect(url_for('index'))
-        
-    except Exception as e:
-        logger.error(f"Unexpected error in OAuth2 callback for {provider}: {str(e)}")
-        oauth2_manager.clear_session_state()
-        return redirect(url_for('login', error='An unexpected error occurred during authentication'))
-
-
-@app.route('/logout', methods=['GET'])
-def logout():
-    """
-    Log out the current user by clearing session data.
-    Requirements: 2.4, 5.3
-    """
-    try:
-        # Get user info for logging before clearing session
-        user = session.get('user', {})
-        user_email = user.get('email', 'unknown')
-        user_id = user.get('id', 'unknown')
-        provider = user.get('provider', 'unknown')
-        
-        # Calculate session duration
-        login_timestamp = session.get('login_timestamp')
-        session_duration = 0
-        if login_timestamp:
-            session_duration = int(datetime.utcnow().timestamp() - login_timestamp)
-        
-        # Get message count from session manager if available
-        message_count = 0
-        try:
-            if session_manager.is_session_valid():
-                message_count = session_manager.get_message_count()
-        except:
-            pass
-        
-        # Track logout activity before clearing session
-        if activity_tracker:
-            try:
-                activity_tracker.log_logout(
-                    user_id=user_id if user_id != 'unknown' else user_email,
-                    session_duration=session_duration,
-                    message_count=message_count,
-                    metadata={
-                        'provider': provider
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Failed to log logout activity: {str(e)}")
-        
-        # Clear all session data
-        session.clear()
-        
-        logger.info(f"User logged out: {user_email}")
-        
-        # Redirect to login page
-        return redirect(url_for('login'))
-        
-    except Exception as e:
-        logger.error(f"Error during logout: {str(e)}")
-        # Clear session anyway
-        session.clear()
-        return redirect(url_for('login'))
-
-
-@app.route('/api/user', methods=['GET'])
-@require_api_auth
-def get_user():
-    """
-    Return current authenticated user information.
-    Requirements: 5.3
-    """
-    try:
-        user = session.get('user', {})
-        
-        return jsonify({
-            'id': user.get('id'),
-            'email': user.get('email'),
-            'name': user.get('name'),
-            'picture': user.get('picture'),
-            'provider': user.get('provider')
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error retrieving user info: {str(e)}")
-        return jsonify({
-            'error': True,
-            'message': 'Failed to retrieve user information',
-            'code': 'USER_INFO_ERROR'
-        }), 500
-
-
-@app.route('/', methods=['GET'])
-@require_auth
-def index():
-    """
-    Serve the chat interface
-    Requirements: 1.1, 2.1, 1.5, 3.2
-    """
-    try:
-        # Get authenticated user information
-        user = session.get('user', {})
-        
-        response = render_template('index.html', user=user, metadata=MetadataConfig.to_dict())
-        # Add cache-busting headers to prevent browser caching
-        response = app.make_response(response)
-        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
-        response.headers['Pragma'] = 'no-cache'
-        response.headers['Expires'] = '0'
-        return response
-    except Exception as e:
-        logger.error(f"Error serving index page: {str(e)}")
-        return jsonify({
-            'error': True,
-            'message': 'Unable to load chat interface',
-            'code': 'TEMPLATE_ERROR'
-        }), 500
-
-
-@app.route('/api/chat', methods=['POST'])
-@require_api_auth
-def chat():
-    """
-    Process chat messages and return responses with comprehensive logging
-    Requirements: 1.1, 1.4, 2.1, 6.1, 1.3, 1.5, 6.2, 3.1, 3.2, 3.4
-    """
-    request_id = getattr(g, 'request_id', None)
-    
-    try:
-        # Get message from request
-        data = request.get_json()
-        if not data or 'message' not in data:
-            logger.warning(f"Invalid request: missing message field", extra={'request_id': request_id})
-            return jsonify({
-                'error': True,
-                'message': 'Message is required',
-                'code': 'INVALID_REQUEST'
-            }), 400
-        
-        user_message = data['message'].strip()
-        if not user_message:
-            logger.warning(f"Empty message received", extra={'request_id': request_id})
-            return jsonify({
-                'error': True,
-                'message': 'Message cannot be empty',
-                'code': 'EMPTY_MESSAGE'
-            }), 400
-        
-        # Billing: check plan limit before processing
-        try:
-            _email = session.get('user', {}).get('email', '')
-            if _email:
-                _allowed, _used, _limit = billing.check_limit(_email)
-                if not _allowed:
-                    _tier = billing.get_or_create_user(_email).get('tier', 'free')
-                    return jsonify({
-                        'error': 'Plan limit reached',
-                        'message': (
-                            f"You have reached your {_used}-question monthly limit. "
-                            "Upgrade to Pro for more."
-                        ),
-                        'upgrade_url': '/pricing',
-                        'response': (
-                            f"You've used all {_limit} questions in your {_tier} plan this month. "
-                            "Visit /pricing to upgrade to Pro."
-                        ),
-                    }), 402
-        except Exception as _billing_exc:
-            logger.warning(f"Billing check failed (fail open): {_billing_exc}")
-
-        # Initialize or validate session
-        session_id = session_manager.initialize_session()
-        logger.info(
-            f"Processing message for session {session_id}",
-            extra={
-                'request_id': request_id,
-                'session_id': session_id,
-                'message_length': len(user_message)
-            }
-        )
-        
-        # Add user message to conversation history
-        session_manager.add_message('user', user_message)
-        
-        # Track message activity (without content)
-        if activity_tracker:
-            try:
-                user = session.get('user', {})
-                user_id = user.get('id', user.get('email', 'unknown'))
-                activity_tracker.log_message(
-                    user_id=user_id,
-                    session_id=session_id,
-                    metadata={
-                        'user_agent': request.headers.get('User-Agent', 'unknown')
-                    }
-                )
-            except Exception as e:
-                logger.error(f"Failed to log message activity: {str(e)}")
-        
-        # Get conversation history for LLM
-        conversation_messages = session_manager.get_conversation_history()
-        conversation_dict = [
-            {'role': msg.role, 'content': msg.content}
-            for msg in conversation_messages
-        ]
-        
-        # Get available tools from MCP client
-        available_tools = []
-        if mcp_client:
-            available_tools = mcp_client.get_tools_for_llm()
-            logger.debug(
-                f"Available tools: {len(available_tools)}",
-                extra={'request_id': request_id, 'session_id': session_id}
-            )
-        else:
-            logger.warning(
-                "MCP client not available, proceeding without tools",
-                extra={'request_id': request_id, 'session_id': session_id}
-            )
-        
-        # Create system prompt
-        system_prompt = llm_service.create_system_prompt(available_tools)
-        
-        # Process conversation with LLM
-        try:
-            response_content, tool_calls, queries, _last_result = llm_service.process_conversation(
-                conversation_history=conversation_dict,  # Include all messages including current one
-                available_tools=available_tools,
-                tool_executor=mcp_client.execute_tool if mcp_client else lambda **kwargs: None,
-                system_prompt=system_prompt,
-                max_iterations=10
-            )
-            
-            logger.info(
-                f"LLM processing completed: {len(tool_calls)} tool calls",
-                extra={
-                    'request_id': request_id,
-                    'session_id': session_id,
-                    'tool_calls_count': len(tool_calls)
-                }
-            )
-        except ChatbotError as e:
-            logger.error(
-                f"LLM processing failed: {e.message}",
-                extra={'request_id': request_id, 'session_id': session_id, 'error_code': e.code}
-            )
-            response_content = get_user_friendly_message(e)
-            tool_calls = []
-            queries = []
-            _last_result = None
-        except Exception as e:
-            log_error_with_context(e, {
-                'request_id': request_id,
-                'session_id': session_id,
-                'message_length': len(user_message)
-            })
-            response_content = "I apologize, but I'm having trouble processing your request right now. Please try again later."
-            tool_calls = []
-            queries = []
-            _last_result = None
-        
-        # Add assistant response to conversation history
-        assistant_message = session_manager.add_message(
-            'assistant',
-            response_content,
-            tool_calls=tool_calls if tool_calls else None
-        )
-        
-        # Get session info for response
-        message_count = session_manager.get_message_count()
-        
-        logger.info(
-            f"Chat response generated successfully",
-            extra={
-                'request_id': request_id,
-                'session_id': session_id,
-                'message_count': message_count,
-                'response_length': len(response_content)
-            }
-        )
-        
-        # Billing: record successful question
-        try:
-            _email = session.get('user', {}).get('email', '')
-            if _email:
-                billing.record_question(_email)
-        except Exception as _billing_exc:
-            logger.warning(f"Billing record failed (fail open): {_billing_exc}")
-
-        # Build result payload for chart rendering — capped at 200 rows, verbatim values
-        _result_payload = None
-        if (
-            _last_result
-            and isinstance(_last_result, dict)
-            and _last_result.get("success")
-            and _last_result.get("rows")
-        ):
-            _result_payload = {
-                "table": _last_result.get("table_name", ""),
-                "columns": _last_result.get("columns", []),
-                "rows": _last_result["rows"][:200],
-            }
-
-        return jsonify({
-            'response': assistant_message.content,
-            'timestamp': assistant_message.timestamp,
-            'session_id': session_id,
-            'message_count': message_count,
-            'tool_calls_count': len(tool_calls) if tool_calls else 0,
-            'queries': queries if queries else [],
-            'result': _result_payload,
-        }), 200
-        
-    except ChatbotError as e:
-        log_error_with_context(e, {'request_id': request_id})
-        error_response = format_error_response(
-            e,
-            include_details=Config.FLASK_ENV != 'production'
-        )
-        return jsonify(error_response), 500
-        
-    except Exception as e:
-        log_error_with_context(e, {'request_id': request_id})
-        error_response = format_error_response(
-            e,
-            include_details=Config.FLASK_ENV != 'production',
-            include_traceback=Config.FLASK_ENV == 'development'
-        )
-        return jsonify(error_response), 500
-
-
-@app.route('/api/session/history', methods=['GET'])
-@require_api_auth
-def get_history():
-    """
-    Get conversation history for current session
-    Requirements: 1.3, 3.1, 3.2, 3.4
-    """
-    try:
-        if not session_manager.is_session_valid():
-            return jsonify({
-                'error': True,
-                'message': 'No active session',
-                'code': 'NO_SESSION'
-            }), 404
-        
-        messages = session_manager.get_conversation_history()
-        session_info = session_manager.get_session_info()
-        
-        return jsonify({
-            'session_id': session_info.session_id,
-            'messages': [msg.to_dict() for msg in messages],
-            'message_count': len(messages),
-            'created_at': session_info.created_at,
-            'last_activity': session_info.last_activity
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error retrieving conversation history: {str(e)}")
-        return jsonify({
-            'error': True,
-            'message': 'Failed to retrieve conversation history',
-            'code': 'HISTORY_ERROR'
-        }), 500
-
-
-@app.route('/api/session/clear', methods=['POST'])
-@require_api_auth
-def clear_history():
-    """
-    Clear conversation history for current session
-    Requirements: 1.3, 3.1, 3.2, 3.4
-    """
-    try:
-        if not session_manager.is_session_valid():
-            return jsonify({
-                'error': True,
-                'message': 'No active session',
-                'code': 'NO_SESSION'
-            }), 404
-        
-        session_id = session_manager.get_session_id()
-        session_manager.clear_conversation_history()
-        
-        return jsonify({
-            'success': True,
-            'message': 'Conversation history cleared',
-            'session_id': session_id
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error clearing conversation history: {str(e)}")
-        return jsonify({
-            'error': True,
-            'message': 'Failed to clear conversation history',
-            'code': 'CLEAR_ERROR'
-        }), 500
-
-
-@app.route('/api/health', methods=['GET'])
-def health():
-    """
-    Health check endpoint with initialization metrics
-    Requirements: 2.1
-    """
-    try:
-        health_status = {
-            'status': 'healthy',
-            'timestamp': datetime.utcnow().isoformat(),
-            'version': '1.0.0',
-            'environment': os.getenv('FLASK_ENV', 'development')
-        }
-        
-        # Check if required services are configured using Config
-        config_status = {
-            'llm_configured': bool(Config.LLM_API_KEY),
-            'oracle_configured': Config.is_oracle_enabled(),
-            'pdf_configured': Config.is_pdf_enabled()
-        }
-        health_status['configuration'] = config_status
-        
-        # Check service status
-        service_status = {
-            'mcp_client': 'initialized' if mcp_client else 'not_initialized',
-            'llm_service': 'initialized' if llm_service else 'not_initialized',
-            'yugabyte_server': 'initialized' if yugabyte_server else 'not_initialized',
-        }
-        
-        if mcp_client:
-            service_status['mcp_servers'] = mcp_client.get_server_status()
-            service_status['available_tools'] = len(mcp_client.get_available_tools())
-        
-        health_status['services'] = service_status
-        
-        # Add initialization metrics
-        health_status['initialization_metrics'] = get_initialization_metrics()
-        
-        return jsonify(health_status), 200
-        
-    except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
-        return jsonify({
-            'status': 'unhealthy',
-            'error': str(e),
-            'timestamp': datetime.utcnow().isoformat()
-        }), 500
-
-
-@app.route('/api/warmup', methods=['GET', 'POST'])
-def warmup():
-    """
-    Warmup endpoint for pre-initializing connections
-    Useful for reducing cold start latency
-    Requirements: 2.4
-    """
-    try:
-        from modules.serverless_optimizer import warmup_connections, get_cold_start_metrics
-        
-        # Initialize services
-        initialize_services()
-        
-        # Warmup connections
-        warmup_results = warmup_connections()
-        
-        # Get performance metrics
-        metrics = get_cold_start_metrics()
-        
-        return jsonify({
-            'status': 'warmed_up',
-            'timestamp': datetime.utcnow().isoformat(),
-            'warmup_results': warmup_results,
-            'metrics': metrics
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Warmup failed: {str(e)}")
-        return jsonify({
-            'status': 'warmup_failed',
-            'error': str(e),
-            'timestamp': datetime.utcnow().isoformat()
-        }), 500
-
-
-@app.route('/admin/analytics', methods=['GET'])
-@require_auth
-def analytics_dashboard():
-    """
-    Display analytics dashboard (admin only).
-    
-    Requirements: 8.4
-    """
-    try:
-        # Check if user has admin role
-        user = session.get('user', {})
-        is_admin = user.get('is_admin', False)
-        
-        # For now, allow any authenticated user to view analytics
-        # In production, you should implement proper admin role checking
-        # if not is_admin:
-        #     return redirect(url_for('index'))
-        
-        return render_template('admin/analytics.html', user=user, metadata=MetadataConfig.to_dict())
-        
-    except Exception as e:
-        logger.error(f"Error serving analytics dashboard: {str(e)}", exc_info=True)
-        return jsonify({
-            'error': True,
-            'message': 'Unable to load analytics dashboard',
-            'code': 'TEMPLATE_ERROR'
-        }), 500
-
-
-@app.route('/api/analytics', methods=['GET'])
-@require_api_auth
-def get_analytics():
-    """
-    Return usage analytics (admin only).
-    
-    Query parameters:
-        - start_date: ISO format date string (optional)
-        - end_date: ISO format date string (optional)
-        - user_id: Specific user ID for user stats (optional)
-    
-    Requirements: 8.4
-    """
-    try:
-        # Check if user has admin role
-        user = session.get('user', {})
-        is_admin = user.get('is_admin', False)
-        
-        # For now, allow any authenticated user to view analytics
-        # In production, you should implement proper admin role checking
-        # if not is_admin:
-        #     return jsonify({
-        #         'error': True,
-        #         'message': 'Unauthorized. Admin access required.',
-        #         'code': 'FORBIDDEN'
-        #     }), 403
-        
-        if not activity_tracker:
-            return jsonify({
-                'error': True,
-                'message': 'Analytics not available',
-                'code': 'ANALYTICS_UNAVAILABLE'
-            }), 503
-        
-        # Parse date parameters
-        start_date = request.args.get('start_date')
-        end_date = request.args.get('end_date')
-        user_id = request.args.get('user_id')
-        
-        start_dt = None
-        end_dt = None
-        
-        if start_date:
-            try:
-                start_dt = datetime.fromisoformat(start_date)
-            except ValueError:
-                return jsonify({
-                    'error': True,
-                    'message': 'Invalid start_date format. Use ISO format (YYYY-MM-DD)',
-                    'code': 'INVALID_DATE'
-                }), 400
-        
-        if end_date:
-            try:
-                end_dt = datetime.fromisoformat(end_date)
-            except ValueError:
-                return jsonify({
-                    'error': True,
-                    'message': 'Invalid end_date format. Use ISO format (YYYY-MM-DD)',
-                    'code': 'INVALID_DATE'
-                }), 400
-        
-        # Get user-specific or global stats
-        if user_id:
-            stats = activity_tracker.get_user_stats(user_id, start_dt, end_dt)
-        else:
-            stats = activity_tracker.get_global_stats(start_dt, end_dt)
-        
-        return jsonify({
-            'success': True,
-            'stats': stats,
-            'timestamp': datetime.utcnow().isoformat()
-        }), 200
-        
-    except Exception as e:
-        logger.error(f"Error retrieving analytics: {str(e)}", exc_info=True)
-        return jsonify({
-            'error': True,
-            'message': 'Failed to retrieve analytics',
-            'code': 'ANALYTICS_ERROR'
-        }), 500
-
-
 # ---------------------------------------------------------------------------
-# Pricing page
+# Routes — decorators here, bodies delegated to app_core.impl_*
 # ---------------------------------------------------------------------------
 
-@app.route('/pricing', methods=['GET'])
-def pricing():
-    """Show the freemium pricing page."""
-    user = session.get('user')
-    metadata = MetadataConfig.to_dict()
-    return render_template('pricing.html', user=user, metadata=metadata)
-
-
-# ---------------------------------------------------------------------------
-# Stripe billing routes
-# ---------------------------------------------------------------------------
-
-@app.route('/billing/create-checkout-session', methods=['POST'])
-@require_auth
-def create_checkout_session():
-    """Create a Stripe Checkout session for the Pro plan."""
-    try:
-        import stripe as _stripe
-        _stripe.api_key = Config.STRIPE_SECRET_KEY
-        user_email = session.get('user', {}).get('email', '')
-        base_url = request.host_url.rstrip('/')
-        checkout = _stripe.checkout.Session.create(
-            mode='subscription',
-            line_items=[{'price': Config.STRIPE_PRO_PRICE_ID, 'quantity': 1}],
-            customer_email=user_email,
-            success_url=base_url + '/?billing=success',
-            cancel_url=base_url + '/pricing?billing=cancelled',
-        )
-        return jsonify({'url': checkout.url})
-    except Exception as e:
-        logger.error(f"Stripe checkout creation failed: {e}")
-        return jsonify({'error': 'Failed to create checkout session'}), 500
-
-
-@app.route('/billing/webhook', methods=['POST'])
-def stripe_webhook():
-    """Handle Stripe webhook events (no auth — Stripe calls this directly)."""
-    try:
-        import stripe as _stripe
-        _stripe.api_key = Config.STRIPE_SECRET_KEY
-        payload = request.get_data()
-        sig_header = request.headers.get('Stripe-Signature', '')
-        event = _stripe.Webhook.construct_event(
-            payload, sig_header, Config.STRIPE_WEBHOOK_SECRET
-        )
-    except Exception as e:
-        logger.warning(f"Stripe webhook verification failed: {e}")
-        return jsonify({'error': 'Invalid webhook'}), 400
-
-    try:
-        if event['type'] == 'checkout.session.completed':
-            customer_email = event['data']['object'].get('customer_email')
-            if customer_email:
-                billing.set_tier(customer_email, 'pro')
-                logger.info(f"Upgraded {customer_email} to pro via Stripe webhook")
-        elif event['type'] == 'customer.subscription.deleted':
-            import stripe as _stripe2
-            _stripe2.api_key = Config.STRIPE_SECRET_KEY
-            customer_id = event['data']['object'].get('customer')
-            if customer_id:
-                customer = _stripe2.Customer.retrieve(customer_id)
-                customer_email = customer.get('email')
-                if customer_email:
-                    billing.set_tier(customer_email, 'free')
-                    logger.info(f"Downgraded {customer_email} to free via Stripe webhook")
-    except Exception as e:
-        logger.error(f"Error processing Stripe webhook event: {e}")
-        return jsonify({'error': 'Webhook handler error'}), 500
-
-    return jsonify({'status': 'ok'})
-
-
-@app.errorhandler(404)
-def not_found(error):
-    """Handle 404 errors with logging"""
-    request_id = getattr(g, 'request_id', None)
-    logger.warning(
-        f"Resource not found: {request.path}",
-        extra={'request_id': request_id, 'path': request.path}
-    )
-    return jsonify({
-        'error': True,
-        'message': 'Resource not found',
-        'code': 'NOT_FOUND'
-    }), 404
-
-
-@app.errorhandler(500)
-def internal_error(error):
-    """Handle 500 errors with comprehensive logging"""
-    request_id = getattr(g, 'request_id', None)
-    log_error_with_context(
-        error,
-        {
-            'request_id': request_id,
-            'path': request.path,
-            'method': request.method
-        }
-    )
-    
-    error_response = format_error_response(
-        error,
-        include_details=Config.FLASK_ENV != 'production',
-        include_traceback=Config.FLASK_ENV == 'development'
-    )
-    return jsonify(error_response), 500
-
-
-@app.errorhandler(Exception)
-def handle_exception(error):
-    """Handle all unhandled exceptions with logging"""
-    request_id = getattr(g, 'request_id', None)
-    log_error_with_context(
-        error,
-        {
-            'request_id': request_id,
-            'path': request.path,
-            'method': request.method
-        }
-    )
-    
-    # Return appropriate status code
-    status_code = 500
-    if hasattr(error, 'code'):
-        status_code = error.code
-    
-    error_response = format_error_response(
-        error,
-        include_details=Config.FLASK_ENV != 'production',
-        include_traceback=Config.FLASK_ENV == 'development'
-    )
-    return jsonify(error_response), status_code
-
-
-# For Vercel serverless deployment, warmup on first request
-# Flask 3.0+ compatible approach using before_request
+# For Vercel: initialize services on first request
 @app.before_request
 def initialize_on_first_request():
-    """Initialize services on first request to avoid import-time delays"""
+    """Initialize services on first request to avoid import-time delays."""
     global _services_initialized
     if not _services_initialized:
         logger.info("First request detected, initializing services...")
         warmup_services()
 
+
+@app.route('/login', methods=['GET'])
+def login():
+    """Display login page. Requirements: 1.1"""
+    return impl_login(oauth2_manager)
+
+
+@app.route('/auth/<provider>', methods=['GET'])
+def auth_redirect(provider: str):
+    """Initiate OAuth2 flow. Requirements: 1.1"""
+    return impl_auth_redirect(provider, oauth2_manager)
+
+
+@app.route('/callback/<provider>', methods=['GET'])
+def auth_callback(provider: str):
+    """Handle OAuth2 callback. Requirements: 1.2, 1.3, 1.4"""
+    return impl_auth_callback(provider, oauth2_manager, activity_tracker)
+
+
+@app.route('/logout', methods=['GET'])
+def logout():
+    """Log out current user. Requirements: 2.4, 5.3"""
+    return impl_logout(activity_tracker)
+
+
+@app.route('/api/user', methods=['GET'])
+@require_api_auth
+def get_user():
+    """Return current user info. Requirements: 5.3"""
+    return impl_get_user()
+
+
+@app.route('/', methods=['GET'])
+@require_auth
+def index():
+    """Serve chat interface. Requirements: 1.1, 2.1, 1.5, 3.2"""
+    return impl_index()
+
+
+@app.route('/api/chat', methods=['POST'])
+@require_api_auth
+def chat():
+    """Process chat message. Requirements: 1.1, 1.4, 2.1, 6.1, 1.3, 1.5, 6.2, 3.1, 3.2, 3.4"""
+    return impl_chat(mcp_client, llm_service, activity_tracker)
+
+
+@app.route('/api/session/history', methods=['GET'])
+@require_api_auth
+def get_history():
+    """Get conversation history. Requirements: 1.3, 3.1, 3.2, 3.4"""
+    return impl_get_history()
+
+
+@app.route('/api/session/clear', methods=['POST'])
+@require_api_auth
+def clear_history():
+    """Clear conversation history. Requirements: 1.3, 3.1, 3.2, 3.4"""
+    return impl_clear_history()
+
+
+@app.route('/api/health', methods=['GET'])
+def health():
+    """Health check endpoint. Requirements: 2.1"""
+    return impl_health(mcp_client, llm_service, yugabyte_server, get_initialization_metrics)
+
+
+@app.route('/api/warmup', methods=['GET', 'POST'])
+def warmup():
+    """Warmup endpoint. Requirements: 2.4"""
+    return impl_warmup(initialize_services)
+
+
+@app.route('/admin/analytics', methods=['GET'])
+@require_auth
+def analytics_dashboard():
+    """Analytics dashboard. Requirements: 8.4"""
+    return impl_analytics_dashboard()
+
+
+@app.route('/api/analytics', methods=['GET'])
+@require_api_auth
+def get_analytics():
+    """Usage analytics API. Requirements: 8.4"""
+    return impl_get_analytics(activity_tracker)
+
+
+@app.route('/pricing', methods=['GET'])
+def pricing():
+    """Freemium pricing page."""
+    return impl_pricing()
+
+
+@app.route('/billing/create-checkout-session', methods=['POST'])
+@require_auth
+def create_checkout_session():
+    """Create Stripe Checkout session."""
+    return impl_create_checkout_session()
+
+
+@app.route('/billing/webhook', methods=['POST'])
+def stripe_webhook():
+    """Stripe webhook handler."""
+    return impl_stripe_webhook()
+
+
+# ---------------------------------------------------------------------------
+# Entry point
+# ---------------------------------------------------------------------------
+
 if __name__ == '__main__':
-    # For local development, warmup before starting the application
     logger.info("Pre-initializing services at startup...")
     warmup_services()
-    
-    # Run the application
     port = int(os.getenv('PORT', 5000))
     debug = Config.FLASK_ENV != 'production'
     app.run(host='0.0.0.0', port=port, debug=debug)
