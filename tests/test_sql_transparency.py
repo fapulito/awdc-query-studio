@@ -326,7 +326,7 @@ class TestProcessConversationQueryHarvesting:
                     ("Here are the results.", []),
                 ]
 
-                content, tool_calls, queries = svc.process_conversation(
+                content, tool_calls, queries, _result = svc.process_conversation(
                     conversation_history=[{"role": "user", "content": "list dogs"}],
                     available_tools=[],
                     tool_executor=fake_executor,
@@ -368,7 +368,7 @@ class TestProcessConversationQueryHarvesting:
                     (None, [mock_tool_req_a, mock_tool_req_b]),
                     ("Done.", []),
                 ]
-                content, tool_calls, queries = svc.process_conversation(
+                content, tool_calls, queries, _result = svc.process_conversation(
                     conversation_history=[{"role": "user", "content": "count"}],
                     available_tools=[],
                     tool_executor=fake_executor,
@@ -395,7 +395,7 @@ class TestProcessConversationQueryHarvesting:
                     (None, [mock_tool_req]),
                     ("No query tables.", []),
                 ]
-                content, tool_calls, queries = svc.process_conversation(
+                content, tool_calls, queries, _result = svc.process_conversation(
                     conversation_history=[{"role": "user", "content": "list tables"}],
                     available_tools=[],
                     tool_executor=lambda tool_name, parameters: list_result,
@@ -408,7 +408,7 @@ class TestProcessConversationQueryHarvesting:
 
         with patch.object(svc, "send_message", return_value={"content": "Hello!", "tool_calls": []}):
             with patch.object(svc, "parse_response", return_value=("Hello!", [])):
-                content, tool_calls, queries = svc.process_conversation(
+                content, tool_calls, queries, _result = svc.process_conversation(
                     conversation_history=[{"role": "user", "content": "hi"}],
                     available_tools=[],
                     tool_executor=lambda **kw: None,
@@ -483,11 +483,12 @@ class TestChatRouteQueriesField:
 
     def test_queries_field_present_and_empty_when_no_db_calls(self):
         """When no yb_query_table is called, queries must be an empty list."""
-        # Return a 3-tuple (new interface)
+        # Return a 4-tuple (current interface)
         self.mock_llm.process_conversation.return_value = (
             "Here is the answer.",
             [],
             [],
+            None,
         )
 
         self._auth_session(self.client)
@@ -516,6 +517,7 @@ class TestChatRouteQueriesField:
             "There were 1000 dogs.",
             [{"tool_name": "yb_query_table"}],
             sample_queries,
+            None,
         )
 
         self._auth_session(self.client)

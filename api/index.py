@@ -702,7 +702,7 @@ def chat():
         
         # Process conversation with LLM
         try:
-            response_content, tool_calls, queries = llm_service.process_conversation(
+            response_content, tool_calls, queries, _last_result = llm_service.process_conversation(
                 conversation_history=conversation_dict,  # Include all messages including current one
                 available_tools=available_tools,
                 tool_executor=mcp_client.execute_tool if mcp_client else lambda **kwargs: None,
@@ -726,6 +726,7 @@ def chat():
             response_content = get_user_friendly_message(e)
             tool_calls = []
             queries = []
+            _last_result = None
         except Exception as e:
             log_error_with_context(e, {
                 'request_id': request_id,
@@ -735,6 +736,7 @@ def chat():
             response_content = "I apologize, but I'm having trouble processing your request right now. Please try again later."
             tool_calls = []
             queries = []
+            _last_result = None
         
         # Add assistant response to conversation history
         assistant_message = session_manager.add_message(
@@ -764,6 +766,20 @@ def chat():
         except Exception as _billing_exc:
             logger.warning(f"Billing record failed (fail open): {_billing_exc}")
 
+        # Build result payload for chart rendering — capped at 200 rows, verbatim values
+        _result_payload = None
+        if (
+            _last_result
+            and isinstance(_last_result, dict)
+            and _last_result.get("success")
+            and _last_result.get("rows")
+        ):
+            _result_payload = {
+                "table": _last_result.get("table_name", ""),
+                "columns": _last_result.get("columns", []),
+                "rows": _last_result["rows"][:200],
+            }
+
         return jsonify({
             'response': assistant_message.content,
             'timestamp': assistant_message.timestamp,
@@ -771,6 +787,7 @@ def chat():
             'message_count': message_count,
             'tool_calls_count': len(tool_calls) if tool_calls else 0,
             'queries': queries if queries else [],
+            'result': _result_payload,
         }), 200
         
     except ChatbotError as e:

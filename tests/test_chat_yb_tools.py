@@ -295,6 +295,7 @@ class TestChatRouteYbTools:
             "Here are the tables.",
             [],
             [],
+            None,
         )
 
         self._auth_session(self.client)
@@ -325,7 +326,7 @@ class TestChatRouteYbTools:
         def fake_process(conversation_history, available_tools, tool_executor,
                          system_prompt=None, max_iterations=10):
             tool_result = tool_executor(tool_name="yb_list_tables", parameters={})
-            return "Tables fetched.", [{"tool_name": "yb_list_tables", "result": tool_result}], []
+            return "Tables fetched.", [{"tool_name": "yb_list_tables", "result": tool_result}], [], None
 
         self.mock_llm.process_conversation.side_effect = fake_process
 
@@ -358,7 +359,7 @@ class TestChatRouteYbTools:
                 tool_name="yb_describe_table",
                 parameters={"table_name": ALLOWED_TABLE},
             )
-            return "Schema retrieved.", [{"tool_name": "yb_describe_table"}], []
+            return "Schema retrieved.", [{"tool_name": "yb_describe_table"}], [], None
 
         self.mock_llm.process_conversation.side_effect = fake_process
 
@@ -390,7 +391,7 @@ class TestChatRouteYbTools:
                 tool_name="yb_query_table",
                 parameters={"table_name": ALLOWED_TABLE, "limit": 10},
             )
-            return "Query results returned.", [{"tool_name": "yb_query_table"}], []
+            return "Query results returned.", [{"tool_name": "yb_query_table"}], [], None
 
         self.mock_llm.process_conversation.side_effect = fake_process
 
@@ -414,6 +415,7 @@ class TestChatRouteYbTools:
             "I can help with that, but no tool was needed.",
             [],
             [],
+            None,
         )
 
         self._auth_session(self.client)

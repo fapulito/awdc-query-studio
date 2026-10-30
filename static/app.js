@@ -76,7 +76,7 @@ document.addEventListener('DOMContentLoaded', function() {
             
             // Display assistant response
             if (data.response) {
-                addMessageToDisplay('assistant', data.response, data.queries || []);
+                addMessageToDisplay('assistant', data.response, data.queries || [], data.result || null);
             } else {
                 throw new Error('No response received from server');
             }
@@ -99,7 +99,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
 
-    function addMessageToDisplay(role, content, queries) {
+    function addMessageToDisplay(role, content, queries, result) {
         const messageDiv = document.createElement('div');
         messageDiv.className = `message ${role}-message`;
         
@@ -115,8 +115,17 @@ document.addEventListener('DOMContentLoaded', function() {
         
         messageDiv.appendChild(messageContent);
 
+        // Chart — rendered before the SQL toggle so it sits right under the text
+        if (role === 'assistant' && result) {
+            var chartSpec = classifyChart(result);
+            if (chartSpec) {
+                messageDiv.appendChild(buildChart(result, chartSpec, queries || []));
+            }
+        }
+
         // "View SQL" transparency toggle — only for assistant messages with queries
-        if (role === 'assistant' && Array.isArray(queries) && queries.length > 0) {
+        // (when a chart is present the toggle is already inlined inside the chart block)
+        if (role === 'assistant' && Array.isArray(queries) && queries.length > 0 && !(result && classifyChart(result))) {
             messageDiv.appendChild(buildSqlToggle(queries));
         }
         
@@ -222,6 +231,275 @@ document.addEventListener('DOMContentLoaded', function() {
         wrapper.appendChild(body);
         return wrapper;
     }
+
+
+    // -----------------------------------------------------------------------
+    // Chart classification and inline SVG rendering
+    // All data comes from result.rows — nothing from the model's answer text.
+    // -----------------------------------------------------------------------
+
+    /**
+     * Determine whether result is chartable and what chart type to use.
+     * Returns {type, labelCol, valueCol} or null.
+     *
+     * Rules (applied in order):
+     *   1. date/month bucket col + numeric col → "line"
+     *   2. categorical text col + numeric col → "bar"
+     *   3. otherwise → null (no chart)
+     *
+     * A column is "date-like" if its name contains date/month/year/period/week/day
+     * OR if the first non-null value looks like an ISO date (YYYY-MM... or YYYY-01-01...).
+     * A column is "numeric" if the first non-null value is a JS number (not a string).
+     */
+    function classifyChart(result) {
+        if (!result || !Array.isArray(result.columns) || !Array.isArray(result.rows)) return null;
+        if (result.rows.length === 0) return null;
+        var cols = result.columns;
+        if (cols.length < 2) return null;
+
+        // Find first non-null value for each column
+        function firstVal(col) {
+            for (var i = 0; i < result.rows.length; i++) {
+                var v = result.rows[i][col];
+                if (v !== null && v !== undefined && v !== '') return v;
+            }
+            return null;
+        }
+
+        function isDateLike(col) {
+            var nameLower = col.toLowerCase();
+            if (/date|month|year|period|week|day/.test(nameLower)) return true;
+            var v = firstVal(col);
+            if (typeof v === 'string' && /^\d{4}-\d{2}/.test(v)) return true;
+            return false;
+        }
+
+        function isNumeric(col) {
+            var v = firstVal(col);
+            return typeof v === 'number';
+        }
+
+        // Try date+numeric pair
+        for (var i = 0; i < cols.length; i++) {
+            if (isDateLike(cols[i])) {
+                for (var j = 0; j < cols.length; j++) {
+                    if (j !== i && isNumeric(cols[j])) {
+                        return {type: 'line', labelCol: cols[i], valueCol: cols[j]};
+                    }
+                }
+            }
+        }
+
+        // Try categorical+numeric pair (first categorical col, first numeric col)
+        var catCol = null, numCol = null;
+        for (var i = 0; i < cols.length; i++) {
+            var v = firstVal(cols[i]);
+            if (typeof v === 'string' && !isDateLike(cols[i]) && catCol === null) catCol = cols[i];
+            if (isNumeric(cols[i]) && numCol === null) numCol = cols[i];
+        }
+        if (catCol && numCol) {
+            return {type: 'bar', labelCol: catCol, valueCol: numCol};
+        }
+
+        return null;
+    }
+
+    /**
+     * Build the chart container element (visible by default).
+     * Includes an inlined "View SQL" provenance toggle if queries is non-empty.
+     */
+    function buildChart(result, spec, queries) {
+        var wrapper = document.createElement('div');
+        wrapper.className = 'chart-wrapper';
+
+        // Title row
+        var titleRow = document.createElement('div');
+        titleRow.className = 'chart-title-row';
+        var titleSpan = document.createElement('span');
+        titleSpan.className = 'chart-title';
+        titleSpan.textContent = spec.valueCol + ' by ' + spec.labelCol;
+        titleRow.appendChild(titleSpan);
+        wrapper.appendChild(titleRow);
+
+        // Build the SVG chart
+        var svgEl = spec.type === 'line'
+            ? buildLineChart(result, spec)
+            : buildBarChart(result, spec);
+        wrapper.appendChild(svgEl);
+
+        // Inline "View SQL" provenance toggle
+        if (Array.isArray(queries) && queries.length > 0) {
+            wrapper.appendChild(buildSqlToggle(queries));
+        }
+
+        return wrapper;
+    }
+
+    /** Prepare data for line chart: extract (label, value) pairs sorted by label. */
+    function prepLineData(result, spec) {
+        return result.rows
+            .map(function(row) { return {label: String(row[spec.labelCol] || ''), value: row[spec.valueCol]}; })
+            .sort(function(a, b) { return a.label < b.label ? -1 : a.label > b.label ? 1 : 0; });
+    }
+
+    /**
+     * Prepare data for bar chart: sort descending by value, top 12 categories,
+     * remaining grouped as "Other".
+     */
+    function prepBarData(result, spec) {
+        var pairs = result.rows.map(function(row) {
+            return {label: String(row[spec.labelCol] || ''), value: row[spec.valueCol]};
+        });
+        pairs.sort(function(a, b) { return b.value - a.value; });
+        var MAX_BARS = 12;
+        if (pairs.length <= MAX_BARS) return pairs;
+        var top = pairs.slice(0, MAX_BARS);
+        var otherSum = pairs.slice(MAX_BARS).reduce(function(s, p) { return s + p.value; }, 0);
+        top.push({label: 'Other', value: otherSum});
+        return top;
+    }
+
+    /** Format a number for axis labels (compact notation for large values). */
+    function fmtNum(n) {
+        if (n === null || n === undefined) return '';
+        if (Math.abs(n) >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+        if (Math.abs(n) >= 1e3) return (n / 1e3).toFixed(1) + 'K';
+        return String(n);
+    }
+
+    /** Create an SVG element with given width/height. */
+    function makeSvg(w, h) {
+        var el = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        el.setAttribute('viewBox', '0 0 ' + w + ' ' + h);
+        el.setAttribute('width', '100%');
+        el.setAttribute('height', h);
+        el.style.display = 'block';
+        return el;
+    }
+
+    /** SVG text element helper. */
+    function svgText(x, y, txt, cls) {
+        var el = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        el.setAttribute('x', x);
+        el.setAttribute('y', y);
+        if (cls) el.setAttribute('class', cls);
+        el.textContent = txt;
+        return el;
+    }
+
+    function buildLineChart(result, spec) {
+        var data = prepLineData(result, spec);
+        if (data.length === 0) return document.createDocumentFragment();
+
+        var W = 560, H = 220;
+        var PAD_L = 52, PAD_R = 16, PAD_T = 16, PAD_B = 48;
+        var plotW = W - PAD_L - PAD_R;
+        var plotH = H - PAD_T - PAD_B;
+
+        var values = data.map(function(d) { return d.value; });
+        var minV = Math.min.apply(null, values);
+        var maxV = Math.max.apply(null, values);
+        if (minV === maxV) { minV = 0; }
+
+        function xPos(i) { return PAD_L + (data.length > 1 ? i / (data.length - 1) : 0.5) * plotW; }
+        function yPos(v) { return PAD_T + plotH - ((v - minV) / (maxV - minV || 1)) * plotH; }
+
+        var svg = makeSvg(W, H);
+
+        // Y grid lines + labels (5 ticks)
+        var TICKS = 5;
+        for (var t = 0; t <= TICKS; t++) {
+            var yv = minV + (maxV - minV) * t / TICKS;
+            var ypx = yPos(yv);
+            var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', PAD_L); line.setAttribute('x2', W - PAD_R);
+            line.setAttribute('y1', ypx); line.setAttribute('y2', ypx);
+            line.setAttribute('class', 'chart-grid');
+            svg.appendChild(line);
+            svg.appendChild(svgText(PAD_L - 4, ypx + 4, fmtNum(Math.round(yv)), 'chart-axis-label chart-axis-right'));
+        }
+
+        // X axis labels (show up to 8 evenly spaced)
+        var XLABELS = Math.min(8, data.length);
+        for (var i = 0; i < XLABELS; i++) {
+            var idx = Math.round(i * (data.length - 1) / (XLABELS > 1 ? XLABELS - 1 : 1));
+            var xpx = xPos(idx);
+            var lbl = data[idx].label;
+            if (lbl.length > 10) lbl = lbl.slice(0, 7) + '…';
+            svg.appendChild(svgText(xpx, H - PAD_B + 16, lbl, 'chart-axis-label chart-axis-center'));
+        }
+
+        // Axis lines
+        var axisX = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        axisX.setAttribute('x1', PAD_L); axisX.setAttribute('x2', W - PAD_R);
+        axisX.setAttribute('y1', PAD_T + plotH); axisX.setAttribute('y2', PAD_T + plotH);
+        axisX.setAttribute('class', 'chart-axis');
+        svg.appendChild(axisX);
+
+        // Polyline
+        var pts = data.map(function(d, i) { return xPos(i) + ',' + yPos(d.value); }).join(' ');
+        var poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+        poly.setAttribute('points', pts);
+        poly.setAttribute('class', 'chart-line');
+        svg.appendChild(poly);
+
+        // Dots
+        data.forEach(function(d, i) {
+            var circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', xPos(i));
+            circle.setAttribute('cy', yPos(d.value));
+            circle.setAttribute('r', data.length <= 24 ? 3 : 2);
+            circle.setAttribute('class', 'chart-dot');
+            svg.appendChild(circle);
+        });
+
+        // Axis column name labels
+        svg.appendChild(svgText(W / 2, H - 4, spec.labelCol, 'chart-col-label chart-axis-center'));
+
+        return svg;
+    }
+
+    function buildBarChart(result, spec) {
+        var data = prepBarData(result, spec);
+        if (data.length === 0) return document.createDocumentFragment();
+
+        var BAR_H = 22, BAR_GAP = 6;
+        var PAD_L = 110, PAD_R = 60, PAD_T = 12, PAD_B = 20;
+        var W = 560;
+        var H = PAD_T + data.length * (BAR_H + BAR_GAP) + PAD_B;
+        var plotW = W - PAD_L - PAD_R;
+
+        var maxV = Math.max.apply(null, data.map(function(d) { return d.value; }));
+
+        var svg = makeSvg(W, H);
+
+        data.forEach(function(d, i) {
+            var y = PAD_T + i * (BAR_H + BAR_GAP);
+            var barW = maxV > 0 ? (d.value / maxV) * plotW : 0;
+
+            // Bar
+            var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+            rect.setAttribute('x', PAD_L);
+            rect.setAttribute('y', y);
+            rect.setAttribute('width', Math.max(barW, 1));
+            rect.setAttribute('height', BAR_H);
+            rect.setAttribute('class', 'chart-bar');
+            svg.appendChild(rect);
+
+            // Category label (left)
+            var lbl = d.label.length > 14 ? d.label.slice(0, 12) + '…' : d.label;
+            svg.appendChild(svgText(PAD_L - 6, y + BAR_H / 2 + 4, lbl, 'chart-axis-label chart-axis-right'));
+
+            // Value label (right of bar)
+            svg.appendChild(svgText(PAD_L + barW + 4, y + BAR_H / 2 + 4, fmtNum(d.value), 'chart-bar-value'));
+        });
+
+        // Column name label (bottom right)
+        svg.appendChild(svgText(W - PAD_R + 4, H - 4, spec.valueCol, 'chart-col-label'));
+
+        return svg;
+    }
+
 
     function formatMarkdown(text) {
         // Escape HTML to prevent XSS

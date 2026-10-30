@@ -551,3 +551,83 @@ body {
     margin-top: 5px;
     font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
 }
+
+/* ------------------------------------------------------------------ */
+/* Inline SVG charts                                                    */
+/* ------------------------------------------------------------------ */
+
+.chart-wrapper {
+    background: #fff;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 12px 14px 10px;
+    margin: 8px 0 4px;
+    overflow: hidden;
+}
+
+.chart-title-row {
+    margin-bottom: 6px;
+}
+
+.chart-title {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: #57606a;
+}
+
+/* SVG element classes (set via setAttribute('class', ...)) */
+.chart-grid {
+    stroke: #e5e7eb;
+    stroke-width: 1;
+}
+
+.chart-axis {
+    stroke: #adb5bd;
+    stroke-width: 1.5;
+}
+
+.chart-axis-label {
+    font-size: 10px;
+    fill: #57606a;
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+}
+
+.chart-axis-right {
+    text-anchor: end;
+}
+
+.chart-axis-center {
+    text-anchor: middle;
+}
+
+.chart-col-label {
+    font-size: 10px;
+    fill: #adb5bd;
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+}
+
+.chart-line {
+    fill: none;
+    stroke: #3b82d4;
+    stroke-width: 2;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+}
+
+.chart-dot {
+    fill: #3b82d4;
+    stroke: #fff;
+    stroke-width: 1.5;
+}
+
+.chart-bar {
+    fill: #3b82d4;
+    rx: 2;
+}
+
+.chart-bar-value {
+    font-size: 10px;
+    fill: #57606a;
+    font-family: -apple-system, 'Segoe UI', system-ui, sans-serif;
+    dominant-baseline: middle;
+}

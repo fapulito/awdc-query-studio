@@ -211,7 +211,7 @@ class TestProtectedRouteAccess:
         
         # Mock LLM service
         mock_llm.create_system_prompt.return_value = "You are a helpful assistant"
-        mock_llm.process_conversation.return_value = ("Hello! How can I help?", [], [])
+        mock_llm.process_conversation.return_value = ("Hello! How can I help?", [], [], None)
         mock_llm.config.provider = "openai"
         
         # Mock MCP client
