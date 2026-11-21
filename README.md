@@ -5,7 +5,7 @@
 **Natural-language querying for municipal animal shelter data.**
 Ask in plain English; an LLM assistant answers by calling database tools — never by writing raw SQL.
 
-Built for AngelHack **"Building with IBM Bob"** (build window Sep 28 – Oct 18, 2026), Experienced Developers track ("Modernize What Matters"), by David Anderson — volunteer with the Animal Welfare Data Center since 2024.
+Built for **IBM SkillsBuild AI Experiential Learning Lab** by David Anderson — volunteer with the Animal Welfare Data Center since 2024.
 
 ## 🎯 What it does
 
@@ -20,8 +20,8 @@ Municipal animal shelter data is public (collected via FOIA) but effectively loc
 ## 🔴 Live demo
 
 - App: https://chat.california.vision (OAuth sign-in required)
-- Demo video (≤3 min): [YOUTUBE LINK]
-- The five questions above are the demo script.
+- Demo video (≤3 min): [\[YOUTUBE LINK\]](https://www.youtube.com/shorts/D3fe4kMnWuU)
+- The demo script uses some of the questions listed.
 
 ## 🗄️ Data
 
