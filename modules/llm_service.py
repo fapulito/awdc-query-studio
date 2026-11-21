@@ -577,19 +577,27 @@ class LLMService:
         logger.warning(f"Max iterations ({max_iterations}) reached in conversation")
         return "I've gathered some information but need more time to process it. Please try rephrasing your question.", tool_calls_made, queries, _last_result
     
-    def create_system_prompt(self, available_tools: List[Dict[str, Any]]) -> str:
+    def create_system_prompt(
+        self,
+        available_tools: List[Dict[str, Any]],
+        grounding_values: Optional[Dict[str, Any]] = None,
+    ) -> str:
         """
-        Create a system prompt that describes available tools
-        
+        Create a system prompt that describes available tools.
+
         Args:
-            available_tools: List of available MCP tools
-            
+            available_tools:  List of available MCP tools.
+            grounding_values: Optional dict {table: {column: [value, ...]}} of
+                              distinct filter values fetched from the database.
+                              When supplied, they are injected into the prompt so
+                              the LLM never invents filter literals.
+
         Returns:
-            System prompt string
+            System prompt string.
         """
         # Simple prompt for Gemini (no tool support)
         if self.config.provider == "gemini":
-            return """You are a helpful AI assistant. Answer questions clearly and concisely based on your knowledge. 
+            return """You are a helpful AI assistant. Answer questions clearly and concisely based on your knowledge.
 If you don't know something, just say so - don't make up information."""
         
         # Full prompt with tools for OpenAI
@@ -627,7 +635,57 @@ YugabyteDB shelter database (tools: yb_query_table, yb_list_tables, yb_describe_
 
 PDF documents (tools: search_pdfs, get_document, list_documents)
   Use for searching uploaded reference documents."""
-        
+
+        # ---------------------------------------------------------------
+        # Grounding block — injected when distinct values are available.
+        # ---------------------------------------------------------------
+        if grounding_values:
+            grounding_lines = [
+                "",
+                "FILTER VALUE GROUNDING — awdc.laas_population_data",
+                "The only valid filter literals for the columns below are listed here.",
+                "Rules that MUST be followed:",
+                "  1. Never invent a filter value. Map the user's wording to the closest",
+                "     stored value (e.g. 'euthanasia' -> 'Euthanized', 'dogs' -> 'DOG').",
+                "  2. Text equality filters on these columns use UPPER(col) = UPPER(value)",
+                "     (operator '=') or operator 'IN' automatically — do NOT add UPPER()",
+                "     yourself; the server handles case-folding.",
+                "  3. If the user refers to a value that cannot be mapped to any stored",
+                "     value, omit that filter entirely rather than guessing.",
+                "  4. 'LA County' or 'Los Angeles' questions: the entire dataset is LAAS",
+                "     (Los Angeles Animal Services). Do NOT add a shelter filter unless",
+                "     the user is explicitly comparing shelters by name.",
+                "  5. ZERO-ROW GUARDRAIL: if a yb_query_table call returns row_count=0",
+                "     and the query had text filters, re-examine the filter values against",
+                "     the grounded values below and retry ONCE with corrected values.",
+                "     If the retry also returns 0 rows, state plainly: 'The query returned",
+                "     no rows with the filters used: <list filters>' — never say 'no data",
+                "     available' or invent a data-limitation explanation.",
+            ]
+            for table, col_map in grounding_values.items():
+                for col, values in col_map.items():
+                    if values:
+                        values_str = ", ".join(f"'{v}'" for v in values)
+                        grounding_lines.append(
+                            f"  {table}.{col}: [{values_str}]"
+                        )
+                    else:
+                        grounding_lines.append(
+                            f"  {table}.{col}: (grounding unavailable — omit filter or use ILIKE)"
+                        )
+            base_prompt += "\n" + "\n".join(grounding_lines)
+        else:
+            # No grounding data — still inject the zero-row rule and case rule.
+            base_prompt += (
+                "\n\nFILTER VALUE RULES (awdc.laas_population_data):"
+                "\n  1. Use UPPER(col) = UPPER(value) semantics (operator '=') for text"
+                "\n     columns animal_type, outcome_type, shelter — the server case-folds"
+                "\n     automatically."
+                "\n  2. ZERO-ROW GUARDRAIL: if a query returns 0 rows and had text filters,"
+                "\n     retry once with corrected filter values. If still 0 rows, say so"
+                "\n     plainly naming the filters — never invent a data-limitation excuse."
+            )
+
         if available_tools:
             tool_descriptions = "\n".join([
                 f"- {tool['name']}: {tool.get('description', 'No description')}"

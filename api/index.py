@@ -287,7 +287,7 @@ def index():
 @require_api_auth
 def chat():
     """Process chat message. Requirements: 1.1, 1.4, 2.1, 6.1, 1.3, 1.5, 6.2, 3.1, 3.2, 3.4"""
-    return impl_chat(mcp_client, llm_service, activity_tracker)
+    return impl_chat(mcp_client, llm_service, activity_tracker, yugabyte_server=yugabyte_server)
 
 
 @app.route('/api/session/history', methods=['GET'])
