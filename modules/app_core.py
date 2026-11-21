@@ -394,12 +394,16 @@ def impl_index():
         }), 500
 
 
-def impl_chat(mcp_client, llm_service, activity_tracker):
+def impl_chat(mcp_client, llm_service, activity_tracker, yugabyte_server=None):
     """
     Implementation for POST /api/chat.
 
     Reads service objects from the caller's namespace (passed explicitly) so
     that test patches on app.mcp_client / api.index.mcp_client take effect.
+
+    yugabyte_server: optional YugabyteMCPServer instance; when present its
+    get_grounding_values() result is injected into the system prompt so the
+    LLM never invents filter literals for categorical columns.
     """
     request_id = getattr(g, 'request_id', None)
 
@@ -492,7 +496,17 @@ def impl_chat(mcp_client, llm_service, activity_tracker):
                 extra={'request_id': request_id, 'session_id': session_id},
             )
 
-        system_prompt = llm_service.create_system_prompt(available_tools)
+        # Fetch grounding values (fail open — log and continue without them).
+        grounding_values = None
+        if yugabyte_server is not None:
+            try:
+                grounding_values = yugabyte_server.get_grounding_values()
+            except Exception as _gv_exc:
+                logger.warning(
+                    f"Grounding value fetch failed (continuing without grounding): {_gv_exc}"
+                )
+
+        system_prompt = llm_service.create_system_prompt(available_tools, grounding_values=grounding_values)
 
         try:
             # Include full conversation_dict (api/index.py behavior)

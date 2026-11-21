@@ -16,6 +16,7 @@ Security posture is strictly stronger than the Oracle server:
 
 import os
 import re
+import time
 import logging
 from contextlib import contextmanager
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -30,7 +31,11 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Fixed-set constants — nothing outside these sets ever reaches SQL
 # ---------------------------------------------------------------------------
-_VALID_FILTER_OPERATORS: Set[str] = {"=", "<", ">", "<=", ">=", "BETWEEN", "IN", "date_relative"}
+_VALID_FILTER_OPERATORS: Set[str] = {"=", "<", ">", "<=", ">=", "BETWEEN", "IN", "ILIKE", "date_relative"}
+
+# Columns that store free-text categorical values subject to case drift.
+# Equality and IN filters on these columns are automatically made case-insensitive.
+_CASE_INSENSITIVE_COLUMNS: Set[str] = {"animal_type", "outcome_type", "shelter"}
 _VALID_AGG_FUNCTIONS: Set[str] = {"COUNT", "AVG", "SUM", "MIN", "MAX"}
 _VALID_DATE_TRUNC_UNITS: Set[str] = {"month", "year", "day"}
 _VALID_EXTRACT_UNITS: Set[str] = {"month", "year", "day"}
@@ -62,6 +67,11 @@ class YugabyteMCPServer:
         self.allowed_tables: List[str] = self._parse_allowed_tables()
         self.query_timeout = int(os.getenv("QUERY_TIMEOUT", "5"))
         self.max_result_size = int(os.getenv("MAX_RESULT_SIZE", "1000"))
+
+        # Grounding cache: {table -> {column -> [values]}}; populated lazily.
+        self._grounding_cache: Dict[str, Any] = {}
+        self._grounding_fetched_at: float = 0.0
+        self._grounding_ttl: float = float(os.getenv("GROUNDING_TTL_SECONDS", "3600"))
 
         self._validate_configuration()
         self.pool = self._initialize_connection_pool()
@@ -432,11 +442,23 @@ class YugabyteMCPServer:
         if operator == "IN":
             if not isinstance(value, (list, tuple)) or len(value) == 0:
                 raise ValidationError("filter.value", "IN requires a non-empty list")
+            if col in _CASE_INSENSITIVE_COLUMNS:
+                # UPPER(col) IN (UPPER(%s), UPPER(%s), ...)
+                placeholders = ", ".join(["UPPER(%s)"] * len(value))
+                params.extend(value)
+                return f"UPPER({quoted_col}) IN ({placeholders})"
             placeholders = ", ".join(["%s"] * len(value))
             params.extend(value)
             return f"{quoted_col} IN ({placeholders})"
 
+        if operator == "ILIKE":
+            params.append(value)
+            return f"{quoted_col} ILIKE %s"
+
         # Simple comparison: =, <, >, <=, >=
+        if operator == "=" and col in _CASE_INSENSITIVE_COLUMNS:
+            params.append(value)
+            return f"UPPER({quoted_col}) = UPPER(%s)"
         params.append(value)
         return f"{quoted_col} {operator} %s"
 
@@ -736,6 +758,76 @@ class YugabyteMCPServer:
         }
 
     # ------------------------------------------------------------------
+    # Grounding helpers
+    # ------------------------------------------------------------------
+
+    # Low-cardinality columns whose distinct values are injected into the
+    # system prompt to prevent the LLM from inventing filter literals.
+    _GROUNDING_COLUMNS: Dict[str, List[str]] = {
+        "awdc.laas_population_data": ["animal_type", "outcome_type", "shelter"],
+    }
+
+    def get_grounding_values(self) -> Dict[str, Dict[str, List[str]]]:
+        """
+        Return distinct values of the low-cardinality filter columns for
+        all grounded tables.
+
+        Results are cached on this instance for ``_grounding_ttl`` seconds
+        (default 3600 s).  On any error the method returns an empty dict and
+        logs a warning so that callers can fail open.
+
+        Returns:
+            {table_name: {column_name: [value, ...]}}
+        """
+        now = time.time()
+        if self._grounding_cache and (now - self._grounding_fetched_at) < self._grounding_ttl:
+            return self._grounding_cache
+
+        result: Dict[str, Dict[str, List[str]]] = {}
+        for table, columns in self._GROUNDING_COLUMNS.items():
+            if not self._is_table_allowed(table):
+                continue
+            col_values: Dict[str, List[str]] = {}
+            for col in columns:
+                try:
+                    if "." in table:
+                        schema_part, bare_part = table.split(".", 1)
+                        sql = (
+                            f'SELECT DISTINCT "{col}" '
+                            f'FROM "{schema_part}"."{bare_part}" '
+                            f'WHERE "{col}" IS NOT NULL '
+                            f'ORDER BY "{col}" '
+                            f'LIMIT 200'
+                        )
+                    else:
+                        sql = (
+                            f'SELECT DISTINCT "{col}" '
+                            f'FROM "{table}" '
+                            f'WHERE "{col}" IS NOT NULL '
+                            f'ORDER BY "{col}" '
+                            f'LIMIT 200'
+                        )
+                    with self._get_connection() as conn:
+                        with conn.cursor() as cur:
+                            cur.execute(sql)
+                            col_values[col] = [row[0] for row in cur.fetchall() if row[0] is not None]
+                    logger.debug(
+                        f"Grounding: fetched {len(col_values[col])} distinct '{col}' values "
+                        f"from {table}"
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        f"Grounding: failed to fetch distinct values for {table}.{col}: {exc}"
+                    )
+                    col_values[col] = []
+            result[table] = col_values
+
+        self._grounding_cache = result
+        self._grounding_fetched_at = now
+        logger.info("Grounding values refreshed", extra={"tables": list(result.keys())})
+        return result
+
+    # ------------------------------------------------------------------
     # MCP interface
     # ------------------------------------------------------------------
 
@@ -804,7 +896,7 @@ class YugabyteMCPServer:
                                     "column": {"type": "string"},
                                    "operator": {
                                        "type": "string",
-                                       "enum": ["=", "<", ">", "<=", ">=", "BETWEEN", "IN", "date_relative"],
+                                       "enum": ["=", "<", ">", "<=", ">=", "BETWEEN", "IN", "ILIKE", "date_relative"],
                                    },
                                    "value": {
                                        "description": (
