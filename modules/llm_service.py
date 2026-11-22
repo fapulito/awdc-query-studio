@@ -43,12 +43,14 @@ class LLMConfig:
     """Configuration for LLM service"""
     api_key: str
     model: str
-    provider: str = "openai"  # "openai" or "gemini"
+    provider: str = "openai"  # "openai", "gemini", or "watsonx"
     api_base_url: Optional[str] = None
     max_tokens: int = 1000
     temperature: float = 0.7
     timeout: int = 30
     max_retries: int = 3
+    # watsonx-specific (ignored by other providers)
+    watsonx_project_id: Optional[str] = None
 
 
 @dataclass
@@ -77,13 +79,31 @@ class LLMService:
         """
         self.config = config
         self.client = None
-        
+        self._watsonx = None
+
         if config.provider == "gemini":
             # Initialize Gemini
             genai = _get_genai()
             genai.configure(api_key=config.api_key)
             self.client = genai.GenerativeModel(config.model)
             logger.info(f"LLMService initialized with Gemini model: {config.model}")
+        elif config.provider == "watsonx":
+            # Initialize watsonx adapter (fail-soft: log but do not crash)
+            try:
+                from modules.watsonx_provider import WatsonxProvider
+                self._watsonx = WatsonxProvider(
+                    api_key=config.api_key,
+                    project_id=config.watsonx_project_id or "",
+                    model_id=config.model,
+                    base_url=config.api_base_url or "https://us-south.ml.cloud.ibm.com",
+                    max_tokens=config.max_tokens,
+                    temperature=config.temperature,
+                    timeout=config.timeout,
+                )
+                logger.info(f"LLMService initialized with watsonx model: {config.model}")
+            except Exception as exc:
+                logger.error(f"watsonx provider init failed: {exc}")
+                # _watsonx stays None; send_message will surface a clear error
         else:
             # Initialize OpenAI
             openai = _get_openai()
@@ -181,6 +201,8 @@ class LLMService:
         """
         if self.config.provider == "gemini":
             return self._send_message_gemini(messages, tools)
+        elif self.config.provider == "watsonx":
+            return self._send_message_watsonx(messages, tools, tool_choice)
         else:
             return self._send_message_openai(messages, tools, tool_choice)
     
@@ -225,6 +247,28 @@ class LLMService:
                 details={}
             )
     
+    def _send_message_watsonx(
+        self,
+        messages: List[Dict[str, Any]],
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: str = 'auto'
+    ) -> Dict[str, Any]:
+        """Send message using watsonx.ai native text/chat endpoint."""
+        if self._watsonx is None:
+            raise LLMAPIError(
+                "watsonx provider is not initialised (check WATSONX_* env vars and startup logs)",
+                model=self.config.model,
+                details={}
+            )
+        try:
+            return self._watsonx.send_message(messages, tools, tool_choice)
+        except Exception as exc:
+            raise LLMAPIError(
+                f"watsonx error: {exc}",
+                model=self.config.model,
+                details={}
+            ) from exc
+
     def _send_message_openai(
         self,
         messages: List[Dict[str, Any]],
@@ -698,21 +742,54 @@ PDF documents (tools: search_pdfs, get_document, list_documents)
 
 def create_llm_service_from_env() -> LLMService:
     """
-    Create LLM service from environment variables
-    
+    Create LLM service from environment variables.
+
+    Provider selection:
+      LLM_PROVIDER=watsonx  → IBM watsonx.ai Granite adapter.
+        Required: WATSONX_API_KEY, WATSONX_PROJECT_ID.
+        Optional: WATSONX_URL   (default https://us-south.ml.cloud.ibm.com)
+                  WATSONX_MODEL_ID (default ibm/granite-4-h-small)
+      LLM_PROVIDER=gemini   → Google Gemini.  LLM_API_KEY required.
+      LLM_PROVIDER=openai   → OpenAI (default). LLM_API_KEY required.
+
     Returns:
         Configured LLMService instance
-        
+
     Raises:
         ValueError: If required environment variables are missing
     """
+    provider = os.getenv('LLM_PROVIDER', 'openai').lower()
+
+    if provider == 'watsonx':
+        api_key = os.getenv('WATSONX_API_KEY')
+        if not api_key:
+            raise ValueError("WATSONX_API_KEY environment variable is required for LLM_PROVIDER=watsonx")
+        project_id = os.getenv('WATSONX_PROJECT_ID')
+        if not project_id:
+            raise ValueError("WATSONX_PROJECT_ID environment variable is required for LLM_PROVIDER=watsonx")
+        model = os.getenv('WATSONX_MODEL_ID', 'ibm/granite-4-h-small')
+        base_url = os.getenv('WATSONX_URL', 'https://us-south.ml.cloud.ibm.com')
+        config = LLMConfig(
+            api_key=api_key,
+            model=model,
+            provider='watsonx',
+            api_base_url=base_url,
+            max_tokens=int(os.getenv('LLM_MAX_TOKENS', 1000)),
+            temperature=float(os.getenv('LLM_TEMPERATURE', 0.7)),
+            timeout=int(os.getenv('LLM_TIMEOUT', 60)),
+            max_retries=int(os.getenv('LLM_MAX_RETRIES', 3)),
+            watsonx_project_id=project_id,
+        )
+        logger.info(f"LLM service configuration loaded: provider=watsonx, model={model}, project={project_id}")
+        return LLMService(config)
+
+    # --- openai / gemini paths (unchanged) ---
     api_key = os.getenv('LLM_API_KEY')
     if not api_key:
         raise ValueError("LLM_API_KEY environment variable is required")
-    
-    provider = os.getenv('LLM_PROVIDER', 'openai').lower()
+
     model = os.getenv('LLM_MODEL', 'gemini-pro' if provider == 'gemini' else 'gpt-4')
-    
+
     config = LLMConfig(
         api_key=api_key,
         model=model,
@@ -723,6 +800,6 @@ def create_llm_service_from_env() -> LLMService:
         timeout=int(os.getenv('LLM_TIMEOUT', 30)),
         max_retries=int(os.getenv('LLM_MAX_RETRIES', 3))
     )
-    
+
     logger.info(f"LLM service configuration loaded: provider={provider}, model={model}")
     return LLMService(config)
