@@ -30,7 +30,7 @@ from modules.pdf_mcp_server import PDFMCPServer
 from modules.yugabyte_mcp_server import YugabyteMCPServer
 from modules.logging_config import configure_from_env, get_logger
 from modules.oauth2_manager import OAuth2Manager
-from modules.auth_decorator import require_auth, require_api_auth
+from modules.auth_decorator import require_auth, require_api_auth, require_service_key
 from modules.activity_tracker import get_activity_tracker
 from modules.app_core import (
     create_app,
@@ -287,6 +287,13 @@ def index():
 @require_api_auth
 def chat():
     """Process chat message. Requirements: 1.1, 1.4, 2.1, 6.1, 1.3, 1.5, 6.2, 3.1, 3.2, 3.4"""
+    return impl_chat(mcp_client, llm_service, activity_tracker, yugabyte_server=yugabyte_server)
+
+
+@app.route('/api/agent/query', methods=['POST'])
+@require_service_key
+def agent_query():
+    """Service route for IBM watsonx Orchestrate. Auth: X-Service-Key header."""
     return impl_chat(mcp_client, llm_service, activity_tracker, yugabyte_server=yugabyte_server)
 
 
