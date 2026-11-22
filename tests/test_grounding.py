@@ -480,3 +480,133 @@ class TestImplChatGrounding:
         llm_svc.create_system_prompt.assert_called_once()
         _, kwargs = llm_svc.create_system_prompt.call_args
         assert kwargs.get("grounding_values") is None
+
+
+# ---------------------------------------------------------------------------
+# 5. QUERY DISCIPLINE block — present in system prompt (Nov-22 work order)
+# ---------------------------------------------------------------------------
+
+
+class TestQueryDisciplinePrompt:
+    """
+    Verify that the QUERY DISCIPLINE instruction block added by the Nov-22
+    granite query-discipline work order is present in the assembled system
+    prompt for all relevant code paths.
+
+    Rules verified:
+      R1  DATASET SCOPE / no county filter
+      R2  SHELTER FILTER only when explicitly named
+      R3  AGGREGATE FIRST / no SELECT *
+      R4  ONE COLUMN ONE CONDITION / use IN
+      R5  GROUNDED VALUES ONLY
+      R6  ZERO MEANS WRONG FORMULATION
+    """
+
+    @pytest.fixture
+    def llm(self):
+        cfg = LLMConfig(api_key="test-key", model="gpt-4o", provider="openai")
+        with patch("modules.llm_service.LLMService.__init__", lambda self, config: None):
+            svc = LLMService.__new__(LLMService)
+            svc.config = cfg
+            svc.client = None
+        return svc
+
+    # -- helpers -------------------------------------------------------------
+
+    def _prompt(self, llm, grounding=None):
+        return llm.create_system_prompt([], grounding_values=grounding)
+
+    # -- R1: dataset-scope rule ----------------------------------------------
+
+    def test_r1_query_discipline_header_present(self, llm):
+        assert "QUERY DISCIPLINE" in self._prompt(llm)
+
+    def test_r1_dataset_scope_no_county_filter(self, llm):
+        p = self._prompt(llm)
+        assert "DATASET SCOPE" in p
+        # Must say LA County describes the whole dataset, not a filter value
+        assert "LA County" in p or "Los Angeles County" in p
+        assert "NOT a filter" in p or "not a filter" in p.lower() or "is NOT a filter" in p
+
+    def test_r1_no_county_name_as_filter_value(self, llm):
+        p = self._prompt(llm)
+        assert "NEVER" in p
+        # The prohibition on using county name as a filter must appear
+        assert "shelter_code" in p
+
+    # -- R2: shelter-filter-only-when-named rule -----------------------------
+
+    def test_r2_shelter_filter_explicit_only(self, llm):
+        p = self._prompt(llm)
+        assert "explicitly" in p.lower()
+        # Shelter names ≠ shelter_code values
+        assert "shelter_code" in p
+
+    # -- R3: aggregate-first / no raw-row dumps ------------------------------
+
+    def test_r3_no_select_star(self, llm):
+        p = self._prompt(llm)
+        assert "SELECT *" in p
+        assert "NEVER" in p
+        # Both must co-occur — the rule says NEVER issue SELECT *
+        idx_never = p.rfind("NEVER")
+        idx_star = p.rfind("SELECT *")
+        # The NEVER before SELECT * must exist
+        assert p.count("SELECT *") >= 1
+
+    def test_r3_aggregate_first_phrase(self, llm):
+        p = self._prompt(llm)
+        assert "AGGREGATE FIRST" in p or "aggregate" in p.lower()
+
+    # -- R4: one column, one condition ---------------------------------------
+
+    def test_r4_in_operator_guidance(self, llm):
+        p = self._prompt(llm)
+        assert "IN" in p
+        assert "ONE COLUMN" in p or "one column" in p.lower()
+
+    # -- R5: grounded values only --------------------------------------------
+
+    def test_r5_grounded_values_only(self, llm):
+        p = self._prompt(llm)
+        assert "GROUNDED VALUES" in p or "grounded" in p.lower()
+
+    # -- R6: zero means wrong formulation ------------------------------------
+
+    def test_r6_zero_means_wrong_formulation(self, llm):
+        p = self._prompt(llm)
+        assert "ZERO MEANS WRONG" in p or "zero-row" in p.lower() or "COUNT of 0" in p
+
+    def test_r6_drop_shelter_filter_on_zero(self, llm):
+        p = self._prompt(llm)
+        # Must instruct to DROP shelter/shelter_code filters when reformulating
+        assert "DROP" in p
+        assert "shelter" in p.lower()
+
+    # -- Block present with and without grounding ---------------------------
+
+    def test_discipline_block_present_without_grounding(self, llm):
+        """The discipline block must appear even when no grounding data is passed."""
+        p = llm.create_system_prompt([])
+        assert "QUERY DISCIPLINE" in p
+
+    def test_discipline_block_present_with_grounding(self, llm):
+        """The discipline block must survive alongside the grounding block."""
+        grounding = {
+            ALLOWED_TABLE: {
+                "animal_type": ["CAT", "DOG"],
+                "outcome_type": ["Adoption"],
+                "shelter": ["EAST LA", "WEST LA"],
+            }
+        }
+        p = llm.create_system_prompt([], grounding_values=grounding)
+        assert "QUERY DISCIPLINE" in p
+        # Grounding block must still be present too
+        assert "FILTER VALUE GROUNDING" in p
+        assert "EAST LA" in p
+
+    def test_gemini_provider_unaffected_by_discipline_block(self, llm):
+        """Gemini uses a minimal prompt; it must not contain the discipline block."""
+        llm.config.provider = "gemini"
+        p = llm.create_system_prompt([])
+        assert "QUERY DISCIPLINE" not in p

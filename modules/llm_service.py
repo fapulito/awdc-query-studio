@@ -678,7 +678,47 @@ YugabyteDB shelter database (tools: yb_query_table, yb_list_tables, yb_describe_
   multiple tables or years separately.
 
 PDF documents (tools: search_pdfs, get_document, list_documents)
-  Use for searching uploaded reference documents."""
+  Use for searching uploaded reference documents.
+
+QUERY DISCIPLINE — awdc.laas_population_data
+Follow these rules on every query. Violations cause zero-row results or
+oversized payloads and must be avoided.
+
+  1. DATASET SCOPE: awdc.laas_population_data contains ONLY Los Angeles
+     County (LAAS) shelters. When a question refers to "LA County" or
+     "Los Angeles County" it is describing the scope of the entire dataset
+     — it is NOT a filter value. NEVER add a shelter or shelter_code
+     filter for a county-level question. NEVER use "LA County", "Los
+     Angeles County", or any county name as a filter value for any column.
+
+  2. SHELTER FILTER — ONLY when explicitly named: add a shelter filter
+     only when the user explicitly names a specific shelter (e.g. "East
+     LA shelter"). Use the shelter column with a grounded value from the
+     list below. Shelter names are NOT shelter_code values — never use
+     a shelter name as a shelter_code filter value or vice versa.
+
+  3. AGGREGATE FIRST — no raw-row dumps: for any counting, trend, or
+     average question write a single GROUP BY aggregate query using the
+     aggregates and group_by parameters of yb_query_table. NEVER issue
+     SELECT * or any query that returns individual rows as an exploration
+     step. A raw-row query will overflow the context window.
+
+  4. ONE COLUMN, ONE CONDITION: never AND the same column against
+     multiple different values in separate conditions — that always
+     returns zero rows. Use the IN operator for multiple values of the
+     same column, e.g. animal_type IN ('CAT', 'DOG').
+
+  5. GROUNDED VALUES ONLY: filter values must be copied exactly from the
+     grounded distinct values listed below for that column. If the user's
+     wording does not match any grounded value, omit the filter rather
+     than guessing.
+
+  6. ZERO MEANS WRONG FORMULATION — not "no data": a zero-row result or
+     a COUNT of 0 is never an answer to report as a finding. It means the
+     query is formulated incorrectly. When reformulating: first DROP all
+     shelter and shelter_code filters, then retry the aggregate without
+     any geographic filter. Only add non-geographic filters back if the
+     unfiltered query also returns zero rows."""
 
         # ---------------------------------------------------------------
         # Grounding block — injected when distinct values are available.
