@@ -718,7 +718,14 @@ oversized payloads and must be avoided.
      query is formulated incorrectly. When reformulating: first DROP all
      shelter and shelter_code filters, then retry the aggregate without
      any geographic filter. Only add non-geographic filters back if the
-     unfiltered query also returns zero rows."""
+     unfiltered query also returns zero rows.
+
+  7. INTAKES MEANS ALL INTAKE EVENTS: a question about intakes, intake
+     trends, or intake volume counts every row in the table, grouped by
+     intake_date. NEVER add an outcome_type filter (such as ADOPTION) to
+     an intake question, and never substitute adoptions or any other
+     outcome subset for intakes. Use an outcome filter only when the
+     question explicitly asks about that outcome."""
 
         # ---------------------------------------------------------------
         # Grounding block — injected when distinct values are available.
