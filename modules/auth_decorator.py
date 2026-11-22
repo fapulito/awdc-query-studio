@@ -12,7 +12,9 @@ from functools import wraps
 from flask import session, redirect, url_for, request, jsonify
 from datetime import datetime
 from typing import Optional, Dict, Any, Callable
+import hmac
 import logging
+import os
 
 logger = logging.getLogger(__name__)
 
@@ -241,4 +243,52 @@ def require_api_auth(f: Callable) -> Callable:
         
         return f(*args, **kwargs)
     
+    return decorated_function
+
+
+def require_service_key(f: Callable) -> Callable:
+    """
+    Decorator to require an X-Service-Key header for machine-to-machine routes.
+
+    Compares the header value against the ORCHESTRATE_SERVICE_KEY environment
+    variable in constant time (hmac.compare_digest) to prevent timing attacks.
+
+    - If ORCHESTRATE_SERVICE_KEY is unset or empty the route returns 503
+      (disabled), never open.
+    - Missing or wrong key returns the same JSON 401 shape as require_api_auth.
+    - No session is required; no session data is read.
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        expected_key = os.environ.get('ORCHESTRATE_SERVICE_KEY', '')
+        if not expected_key:
+            logger.warning(
+                "Service route called but ORCHESTRATE_SERVICE_KEY is not set",
+                extra={'path': request.path, 'ip_address': request.remote_addr},
+            )
+            return jsonify({
+                'error': True,
+                'message': 'Service route is disabled',
+                'code': 'SERVICE_DISABLED',
+            }), 503
+
+        provided_key = request.headers.get('X-Service-Key', '')
+        # constant-time comparison — both sides must be str
+        if not hmac.compare_digest(provided_key, expected_key):
+            logger.warning(
+                "Service route: invalid or missing X-Service-Key",
+                extra={'path': request.path, 'ip_address': request.remote_addr},
+            )
+            return jsonify({
+                'error': True,
+                'message': 'Authentication required',
+                'code': 'UNAUTHORIZED',
+            }), 401
+
+        logger.info(
+            "Service route access granted",
+            extra={'caller': 'orchestrate', 'path': request.path},
+        )
+        return f(*args, **kwargs)
+
     return decorated_function
