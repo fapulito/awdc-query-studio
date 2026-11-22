@@ -500,6 +500,7 @@ class TestQueryDisciplinePrompt:
       R4  ONE COLUMN ONE CONDITION / use IN
       R5  GROUNDED VALUES ONLY
       R6  ZERO MEANS WRONG FORMULATION
+      R7  INTAKES MEANS ALL INTAKE EVENTS / no outcome_type filter on intake questions
     """
 
     @pytest.fixture
@@ -604,6 +605,35 @@ class TestQueryDisciplinePrompt:
         # Grounding block must still be present too
         assert "FILTER VALUE GROUNDING" in p
         assert "EAST LA" in p
+
+    # -- R7: intakes means all intake events ---------------------------------
+
+    def test_r7_intakes_means_all_intake_events(self, llm):
+        p = self._prompt(llm)
+        assert "INTAKES MEANS ALL INTAKE EVENTS" in p
+
+    def test_r7_no_outcome_type_filter_on_intake(self, llm):
+        p = self._prompt(llm)
+        # Must explicitly prohibit adding an outcome_type filter to intake questions
+        assert "outcome_type" in p
+        assert "NEVER" in p
+        # The prohibition should appear in the context of intake questions
+        assert "intake" in p.lower()
+
+    def test_r7_no_adoption_substitution(self, llm):
+        p = self._prompt(llm)
+        # Must explicitly name ADOPTION as a forbidden substitution
+        assert "ADOPTION" in p
+        # Must say not to substitute adoptions for intakes
+        assert "substitute" in p.lower()
+
+    def test_r7_outcome_filter_only_when_explicit(self, llm):
+        p = self._prompt(llm)
+        # Must state outcome filter is only used when question explicitly asks for it
+        assert "explicitly" in p.lower()
+        assert "outcome" in p.lower()
+
+    # -- Block present with and without grounding ---------------------------
 
     def test_gemini_provider_unaffected_by_discipline_block(self, llm):
         """Gemini uses a minimal prompt; it must not contain the discipline block."""
