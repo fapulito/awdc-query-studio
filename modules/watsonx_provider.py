@@ -195,47 +195,45 @@ def _to_watsonx_tools(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return tools  # watsonx accepts the same schema
 
 
-def _from_watsonx_response(body: Dict[str, Any]) -> Dict[str, Any]:
+def _unwrap_double_encoded_args(args: str) -> str:
     """
-    Convert a watsonx /ml/v1/text/chat response body to the app's internal
-    response dict:
-      {"content": str|None, "role": "assistant",
-       "finish_reason": str, "tool_calls": [...]}
+    Unwrap double-encoded JSON arguments.
 
-    watsonx response shape:
-      {
-        "results": [
-          {
-            "generated_text": "...",   # may be absent when tool_calls present
-            "stop_reason": "...",
-            "message": {
-              "role": "assistant",
-              "content": "...",        # may be null/absent
-              "tool_calls": [...]      # present when model calls a tool
-            }
-          }
-        ],
-        "model_id": "...",
-        ...
-      }
+    Some models (e.g. Granite via the chat endpoint) return the arguments
+    field as a JSON string whose decoded value is *also* a JSON string
+    rather than the arguments object directly.  Unwrap one level at a time
+    until the value is no longer a string, so the caller can rely on a
+    single json.loads() to reach the arguments dict.
+
+    If decoding fails at any point the original string is returned unchanged.
     """
-    results = body.get("results", [])
-    if not results:
-        return {"content": None, "role": "assistant", "finish_reason": "stop", "tool_calls": []}
+    value = args
+    while True:
+        try:
+            decoded = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            break
+        if isinstance(decoded, str):
+            value = decoded
+        else:
+            # decoded is already the object (or None / list / etc.) — stop
+            break
+    return value
 
-    first = results[0]
-    message = first.get("message", {})
-    content = message.get("content") or first.get("generated_text") or None
-    stop_reason = first.get("stop_reason", "stop")
 
-    # Normalise tool_calls
-    raw_tool_calls = message.get("tool_calls", [])
+def _parse_tool_calls(raw_tool_calls: list) -> list:
+    """
+    Normalise a raw tool_calls list from either the choices[] or results[]
+    response shape into the app-internal format, unwrapping double-encoded
+    arguments along the way.
+    """
     tool_calls = []
     for tc in raw_tool_calls:
         fn = tc.get("function", {})
         args = fn.get("arguments", "{}")
         if isinstance(args, dict):
             args = json.dumps(args)
+        args = _unwrap_double_encoded_args(args)
         tool_calls.append({
             "id": tc.get("id", ""),
             "type": "function",
@@ -244,12 +242,81 @@ def _from_watsonx_response(body: Dict[str, Any]) -> Dict[str, Any]:
                 "arguments": args,
             },
         })
+    return tool_calls
+
+
+def _from_watsonx_response(body: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Convert a watsonx /ml/v1/text/chat response body to the app's internal
+    response dict:
+      {"content": str|None, "role": "assistant",
+       "finish_reason": str, "tool_calls": [...]}
+
+    The endpoint returns an OpenAI-shaped response (choices[]) when tool
+    calls are involved.  It may also return the older generation shape
+    (results[]) for plain text completions.  Try choices[] first; fall
+    back to results[] when choices is absent.
+
+    Chat (OpenAI-shaped) response:
+      {
+        "choices": [
+          {
+            "finish_reason": "tool_calls" | "stop",
+            "message": {
+              "role": "assistant",
+              "content": "..." | null,
+              "tool_calls": [...]
+            }
+          }
+        ]
+      }
+
+    Generation (legacy) response:
+      {
+        "results": [
+          {
+            "generated_text": "...",
+            "stop_reason": "...",
+            "message": {
+              "role": "assistant",
+              "content": "...",
+              "tool_calls": [...]
+            }
+          }
+        ]
+      }
+    """
+    # --- choices[] path (OpenAI-shaped, used by the chat endpoint) ----------
+    choices = body.get("choices")
+    if choices:
+        first = choices[0]
+        message = first.get("message", {})
+        content = message.get("content") or None
+        finish_reason = first.get("finish_reason", "stop")
+        raw_tool_calls = message.get("tool_calls") or []
+        return {
+            "content": content,
+            "role": "assistant",
+            "finish_reason": finish_reason,
+            "tool_calls": _parse_tool_calls(raw_tool_calls),
+        }
+
+    # --- results[] path (legacy / generation shape) -------------------------
+    results = body.get("results", [])
+    if not results:
+        return {"content": None, "role": "assistant", "finish_reason": "stop", "tool_calls": []}
+
+    first = results[0]
+    message = first.get("message", {})
+    content = message.get("content") or first.get("generated_text") or None
+    stop_reason = first.get("stop_reason", "stop")
+    raw_tool_calls = message.get("tool_calls") or []
 
     return {
         "content": content,
         "role": "assistant",
         "finish_reason": stop_reason,
-        "tool_calls": tool_calls,
+        "tool_calls": _parse_tool_calls(raw_tool_calls),
     }
 
 

@@ -26,8 +26,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 from modules.watsonx_provider import (
     _TokenCache,
     _from_watsonx_response,
+    _parse_tool_calls,
     _to_watsonx_messages,
     _to_watsonx_tools,
+    _unwrap_double_encoded_args,
     get_iam_token,
     WatsonxProvider,
 )
@@ -334,6 +336,126 @@ class TestMessageToolMapping:
         result = _from_watsonx_response(body)
         assert result["content"] == "hi"
         assert result["tool_calls"] == []
+
+    # -----------------------------------------------------------------------
+    # choices[] path — OpenAI-shaped response (chat endpoint, Granite 4-h)
+    # -----------------------------------------------------------------------
+
+    def test_choices_path_tool_call_double_encoded_args(self):
+        """
+        Captured shape from granite-4-h-small via /ml/v1/text/chat:
+          choices[0].message.tool_calls, finish_reason "tool_calls",
+          arguments double-encoded (a JSON string wrapping another JSON string).
+        The result must carry one tool call whose arguments parse directly
+        to the arguments object.
+        """
+        # Innermost value: the actual arguments object
+        inner_args = json.dumps({"table_name": "awdc.laas_population_data"})
+        # Outer encoding: a JSON string that is itself a JSON string
+        double_encoded = json.dumps(inner_args)  # '"{\\"table_name\\": \\"awdc...\\\"}"'
+
+        body = {
+            "choices": [
+                {
+                    "finish_reason": "tool_calls",
+                    "message": {
+                        "role": "assistant",
+                        "content": None,
+                        "tool_calls": [
+                            {
+                                "id": "call_wx_001",
+                                "type": "function",
+                                "function": {
+                                    "name": "yb_describe_table",
+                                    "arguments": double_encoded,
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+            "model_id": "ibm/granite-4-h-small",
+        }
+
+        result = _from_watsonx_response(body)
+
+        assert result["role"] == "assistant"
+        assert result["finish_reason"] == "tool_calls"
+        assert result["content"] is None
+        assert len(result["tool_calls"]) == 1
+
+        tc = result["tool_calls"][0]
+        assert tc["id"] == "call_wx_001"
+        assert tc["function"]["name"] == "yb_describe_table"
+        args = json.loads(tc["function"]["arguments"])
+        assert args == {"table_name": "awdc.laas_population_data"}
+
+    def test_choices_path_plain_text_response(self):
+        """choices[] with a plain text reply (no tool calls) returns content correctly."""
+        body = {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {
+                        "role": "assistant",
+                        "content": "Here is your answer.",
+                    },
+                }
+            ]
+        }
+        result = _from_watsonx_response(body)
+        assert result["content"] == "Here is your answer."
+        assert result["finish_reason"] == "stop"
+        assert result["tool_calls"] == []
+
+    def test_choices_path_takes_priority_over_results(self):
+        """When both choices and results are present, choices wins."""
+        body = {
+            "choices": [
+                {
+                    "finish_reason": "stop",
+                    "message": {"role": "assistant", "content": "from choices"},
+                }
+            ],
+            "results": [
+                {
+                    "stop_reason": "stop",
+                    "message": {"role": "assistant", "content": "from results"},
+                }
+            ],
+        }
+        result = _from_watsonx_response(body)
+        assert result["content"] == "from choices"
+
+    # -----------------------------------------------------------------------
+    # Double-encoding unwrapper unit tests
+    # -----------------------------------------------------------------------
+
+    def test_unwrap_already_object_string_unchanged(self):
+        """A string that decodes to an object is returned as-is (not unwrapped)."""
+        args = json.dumps({"k": "v"})
+        assert _unwrap_double_encoded_args(args) == args
+
+    def test_unwrap_double_encoded(self):
+        """A string that decodes to another string is unwrapped one level."""
+        inner = json.dumps({"k": "v"})
+        double = json.dumps(inner)
+        result = _unwrap_double_encoded_args(double)
+        assert result == inner
+        # The result should now parse directly to the object
+        assert json.loads(result) == {"k": "v"}
+
+    def test_unwrap_triple_encoded(self):
+        """Triple-encoding is fully unwrapped until the value is an object string."""
+        inner = json.dumps({"k": "v"})
+        triple = json.dumps(json.dumps(inner))
+        result = _unwrap_double_encoded_args(triple)
+        assert json.loads(result) == {"k": "v"}
+
+    def test_unwrap_invalid_json_passes_through(self):
+        """An invalid JSON string is returned unchanged without raising."""
+        bad = "not json at all"
+        assert _unwrap_double_encoded_args(bad) == bad
 
 
 # ===========================================================================
