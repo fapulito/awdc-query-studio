@@ -496,6 +496,14 @@ class LLMService:
                 )
             except LLMAPIError as e:
                 logger.error(f"LLM API error: {e.message}")
+                if self.config.provider == "watsonx":
+                    return (
+                        "AWDC Query Studio runs on IBM Granite (ibm/granite-4-h-small) through "
+                        "IBM watsonx.ai. This live demo runs on the watsonx Lite plan, and its "
+                        "monthly token allowance is currently exhausted \u2014 it renews on "
+                        "December 1, 2026. The full code, including the watsonx integration, "
+                        "is in the public repository: github.com/fapulito/awdc-query-studio"
+                    ), tool_calls_made, queries, _last_result
                 return "I apologize, but the AI service is temporarily unavailable. Please try again in a moment.", tool_calls_made, queries, _last_result
             except TimeoutError as e:
                 logger.error(f"LLM timeout: {e.message}")
