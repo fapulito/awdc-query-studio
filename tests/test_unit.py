@@ -358,6 +358,71 @@ class TestLLMService:
         assert 'tool2' in prompt
         assert 'First tool' in prompt
 
+    @patch('modules.llm_service._get_openai')
+    def test_process_conversation_watsonx_provider_failure_returns_quota_message(self, mock_get_openai):
+        """With watsonx provider active and the provider call failing, the
+        user-facing response must contain the watsonx Lite allowance message."""
+        mock_openai = MagicMock()
+        mock_get_openai.return_value = mock_openai
+
+        config = LLMConfig(
+            api_key='test_key',
+            model='ibm/granite-4-h-small',
+            provider='watsonx',
+        )
+        service = LLMService.__new__(LLMService)
+        service.config = config
+        service._watsonx = None
+
+        # Patch send_message to raise LLMAPIError (simulates exhausted quota)
+        with patch.object(service, 'send_message', side_effect=LLMAPIError("token quota exceeded")):
+            with patch.object(service, 'format_messages', return_value=[]):
+                with patch.object(service, 'format_tools_for_llm', return_value=[]):
+                    msg, _, _, _ = service.process_conversation(
+                        conversation_history=[{'role': 'user', 'content': 'Hello'}],
+                        available_tools=[],
+                        tool_executor=lambda **kw: None,
+                        system_prompt='',
+                    )
+
+        assert 'watsonx' in msg
+        assert 'Lite' in msg
+        assert 'December 1, 2026' in msg
+        assert 'github.com/fapulito/awdc-query-studio' in msg
+        # Must NOT be the generic message
+        assert 'temporarily unavailable' not in msg
+
+    @patch('modules.llm_service._get_openai')
+    def test_process_conversation_non_watsonx_provider_failure_returns_generic_message(self, mock_get_openai):
+        """With a non-watsonx provider active and the call failing, the
+        response must be the existing generic message unchanged."""
+        mock_openai = MagicMock()
+        mock_client = MagicMock()
+        mock_openai.OpenAI.return_value = mock_client
+        mock_get_openai.return_value = mock_openai
+
+        config = LLMConfig(
+            api_key='test_key',
+            model='gpt-4',
+            provider='openai',
+        )
+        service = LLMService(config)
+
+        with patch.object(service, 'send_message', side_effect=LLMAPIError("rate limit")):
+            with patch.object(service, 'format_messages', return_value=[]):
+                with patch.object(service, 'format_tools_for_llm', return_value=[]):
+                    msg, _, _, _ = service.process_conversation(
+                        conversation_history=[{'role': 'user', 'content': 'Hello'}],
+                        available_tools=[],
+                        tool_executor=lambda **kw: None,
+                        system_prompt='',
+                    )
+
+        assert 'temporarily unavailable' in msg
+        # Must NOT contain the watsonx-specific message
+        assert 'December 1, 2026' not in msg
+        assert 'Lite' not in msg
+
 
 # ============================================================================
 # Oracle MCP Server Tests
